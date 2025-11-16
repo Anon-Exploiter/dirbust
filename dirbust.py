@@ -343,7 +343,7 @@ class DirbustScanner(object):
         ]
         header_lines = [
             separator,
-            "Dirbust v0.0.1 by @syed__umar & AI",
+            "Dirbust v0.0.1 by @syed__umar",
             separator,
         ]
         header_lines.extend(
