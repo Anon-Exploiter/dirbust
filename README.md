@@ -2,7 +2,10 @@
 
 Dirbust is a Burp Suite extension that replicates the feature set of Dirbuster/Dirsearch/Gobuster directly inside Burp. It performs fast directory and file discovery using Burp’s own HTTP stack so all requests remain visible across Proxy/Logger/Repeater.
 
-> Built for testers who want dirbusting directly in Burp without leaving the suite.
+> Built for testers who want dirbusting directly in Burp without leaving.
+
+<img width="2152" height="995" alt="image" src="https://github.com/user-attachments/assets/5917e2c5-e200-4565-8ca5-7a9b23f47e7f" />
+
 
 ---
 
