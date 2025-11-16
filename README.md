@@ -4,7 +4,7 @@ Dirbust is a Burp Suite extension that replicates the feature set of Dirbuster/D
 
 > Built for testers who want dirbusting directly in Burp without leaving.
 
-<img width="2152" height="995" alt="image" src="https://github.com/user-attachments/assets/5917e2c5-e200-4565-8ca5-7a9b23f47e7f" />
+<img width="1565" height="1015" alt="image" src="https://github.com/user-attachments/assets/1c668847-2dc7-49f3-a2f4-e103ccc31050" />
 
 
 ---
