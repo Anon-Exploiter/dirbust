@@ -132,5 +132,6 @@ Distributed under the MIT License. See `LICENSE` or the repository for details.
 ## 🙏 Acknowledgments
 
 - Functionality in this project draws directly from Dirsearch, with output formatting inspired by Gobuster. All rights to the original tools remain with their respective authors.
+- AI as this has been heavily vibe coded.
 
 For bugs, feature requests, or contributions, please open an issue or pull request! Happy busting!
