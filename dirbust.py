@@ -34,8 +34,6 @@ from java.awt import GridBagLayout
 from java.awt import Insets
 from java.io import File
 from java.lang import Runnable
-from java.awt.event import MouseAdapter
-from java.awt.event import MouseEvent
 from javax.swing import AbstractAction
 from javax.swing import BorderFactory
 from javax.swing import JButton
@@ -84,7 +82,6 @@ DEFAULT_EXTENSIONS = [
     "js",
     "txt",
 ]
-DEFAULT_STATUS_CODES = [200, 204, 301, 302, 307, 401, 403]
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
