@@ -40,7 +40,7 @@ I built this to get around that limitation. You simply run dirbust inside BurpSu
 1. Clone or download this repository.
 2. Launch Burp Suite (community or professional edition).
 3. Navigate to `Extender` → `Extensions`.
-4. Click `Add`, select `Extension Type: Python`, and choose `burp-dirsearch.py`.
+4. Click `Add`, select `Extension Type: Python`, and choose `dirbust.py`.
 5. Ensure Jython 2.7+ is configured in Burp’s extender options.
 6. Grab a copy of [Dirsearch's dictionary](https://raw.githubusercontent.com/maurosoria/dirsearch/refs/heads/master/db/dicc.txt) as the extension is most effective with it
 
