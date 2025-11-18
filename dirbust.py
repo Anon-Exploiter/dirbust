@@ -141,9 +141,7 @@ class DirbustConfig(object):
         self.retries = 1
         self.delay = 0.0
         self.rate = 0
-        self.recursive_status = set(
-            [200, 204, 301, 302, 307, 401, 403]
-        )
+        self.recursive_status = set([200, 204, 301, 302, 307])
         self.auto_calibrate = False
         self.retry_on_status = set([429, 500, 502, 503, 504])
 
@@ -300,7 +298,9 @@ class DirbustScanner(object):
             if not self.config.wordlist_path:
                 raise ValueError("Wordlist path is required")
             entry_cache = [] if self.config.recursive else None
-            wordlist_iter = self._load_wordlist(self.config.wordlist_path)
+            wordlist_iter = self._load_wordlist(
+                self.config.wordlist_path
+            )
             if wordlist_iter is None:
                 raise ValueError("Wordlist is empty or unreadable")
             parsed = urlparse(self.config.target_url)
@@ -342,7 +342,9 @@ class DirbustScanner(object):
                     ", ".join(
                         [
                             str(x)
-                            for x in sorted(self.config.exclude_status)
+                            for x in sorted(
+                                self.config.exclude_status
+                            )
                         ]
                     )
                     or "-",
@@ -376,7 +378,8 @@ class DirbustScanner(object):
                 self.log(line)
 
             self._completion_thread = threading.Thread(
-                target=self._wait_for_completion, name="Dirbust-monitor"
+                target=self._wait_for_completion,
+                name="Dirbust-monitor",
             )
             self._completion_thread.daemon = True
             self._completion_thread.start()
@@ -1210,7 +1213,9 @@ class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
                     self.panel.log(message)
                     self.panel.scan_finished()
 
-        launcher = threading.Thread(target=_run, name="Dirbust-launcher")
+        launcher = threading.Thread(
+            target=_run, name="Dirbust-launcher"
+        )
         launcher.daemon = True
         launcher.start()
 
