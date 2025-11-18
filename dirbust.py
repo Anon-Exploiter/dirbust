@@ -15,6 +15,7 @@ import os
 import shlex
 import threading
 import time
+import traceback
 
 try:
     import Queue
@@ -271,6 +272,8 @@ class DirbustScanner(object):
         self._queue = Queue.Queue()
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._running = False
         self._visited = set()
         self.config = None
         self._wordlist_entries = []
@@ -289,85 +292,100 @@ class DirbustScanner(object):
         self.config = config
 
     def start(self):
-        if not self.config:
-            raise ValueError("Scanner not configured")
-        if not self.config.target_url:
-            raise ValueError("Target URL is required")
-        if not self.config.wordlist_path:
-            raise ValueError("Wordlist path is required")
-        wordlist = self._load_wordlist(self.config.wordlist_path)
-        if not wordlist:
-            raise ValueError("Wordlist is empty or unreadable")
-        parsed = urlparse(self.config.target_url)
-        if not parsed.scheme or not parsed.netloc:
-            raise ValueError("Invalid target URL")
-        self._setup_target(parsed)
-        self._stop_event.clear()
-        self._threads = []
-        self._queue = Queue.Queue()
-        self._visited = set()
-        self._wordlist_entries = self._generate_entries(wordlist)
-        for entry in self._wordlist_entries:
-            path = self._build_path(entry)
-            self._queue.put((path, 0))
-        for _ in range(self.config.threads):
-            thread = threading.Thread(
-                target=self._worker, name="Dirbust-worker"
-            )
-            thread.daemon = True
-            thread.start()
-            self._threads.append(thread)
-        # self.log(
-        #     "Scan started with %d entries and %d threads"
-        #     % (self._queue.qsize(), self.config.threads)
-        # )
+        if self.is_running():
+            raise RuntimeError("Dirbust scan already running")
+        self._set_running(True)
+        try:
+            if not self.config:
+                raise ValueError("Scanner not configured")
+            if not self.config.target_url:
+                raise ValueError("Target URL is required")
+            if not self.config.wordlist_path:
+                raise ValueError("Wordlist path is required")
+            entry_cache = [] if self.config.recursive else None
+            wordlist_iter = self._load_wordlist(self.config.wordlist_path)
+            if wordlist_iter is None:
+                raise ValueError("Wordlist is empty or unreadable")
+            parsed = urlparse(self.config.target_url)
+            if not parsed.scheme or not parsed.netloc:
+                raise ValueError("Invalid target URL")
+            self._setup_target(parsed)
+            self._stop_event.clear()
+            self._threads = []
+            self._queue = Queue.Queue()
+            self._visited = set()
+            has_entries = False
+            for entry in self._generate_entries(
+                wordlist_iter, entry_cache
+            ):
+                has_entries = True
+                path = self._build_path(entry)
+                self._queue.put((path, 0))
+            if not has_entries:
+                raise ValueError("Wordlist is empty or unreadable")
+            self._wordlist_entries = entry_cache or tuple()
+            for _ in range(self.config.threads):
+                thread = threading.Thread(
+                    target=self._worker, name="Dirbust-worker"
+                )
+                thread.daemon = True
+                thread.start()
+                self._threads.append(thread)
+            # self.log(
+            #     "Scan started with %d entries and %d threads"
+            #     % (self._queue.qsize(), self.config.threads)
+            # )
 
-        separator = "=" * 63
-        fields = [
-            ("[+] URL:", self.config.target_url or "-"),
-            ("[+] Method:", self.config.method),
-            (
-                "[+] Excluded Codes:",
-                ", ".join(
-                    [
-                        str(x)
-                        for x in sorted(self.config.exclude_status)
-                    ]
-                )
-                or "-",
-            ),
-            ("[+] Threads:", str(self.config.threads)),
-            ("[+] Timeout:", "%ss" % int(self.config.timeout)),
-            ("[+] Wordlist:", self.config.wordlist_path or "-"),
-            ("[+] User Agent:", self.config.user_agent or "-"),
-        ]
-        header_lines = [
-            separator,
-            "Dirbust v0.0.1 by @syed__umar",
-            separator,
-        ]
-        header_lines.extend(
-            [
-                "{label} {value}".format(
-                    label=label,
-                    value=value,
-                )
-                for label, value in fields
+            separator = "=" * 63
+            fields = [
+                ("[+] URL:", self.config.target_url or "-"),
+                ("[+] Method:", self.config.method),
+                (
+                    "[+] Excluded Codes:",
+                    ", ".join(
+                        [
+                            str(x)
+                            for x in sorted(self.config.exclude_status)
+                        ]
+                    )
+                    or "-",
+                ),
+                ("[+] Threads:", str(self.config.threads)),
+                ("[+] Timeout:", "%ss" % int(self.config.timeout)),
+                ("[+] Wordlist:", self.config.wordlist_path or "-"),
+                ("[+] User Agent:", self.config.user_agent or "-"),
             ]
-        )
-        header_lines.append(separator)
-        header_lines.append(
-            "%s Starting Dirbust" % time.strftime("%Y/%m/%d %H:%M:%S")
-        )
-        header_lines.append(separator)
-        for line in header_lines:
-            self.log(line)
+            header_lines = [
+                separator,
+                "Dirbust v0.0.1 by @syed__umar",
+                separator,
+            ]
+            header_lines.extend(
+                [
+                    "{label} {value}".format(
+                        label=label,
+                        value=value,
+                    )
+                    for label, value in fields
+                ]
+            )
+            header_lines.append(separator)
+            header_lines.append(
+                "%s Starting Dirbust"
+                % time.strftime("%Y/%m/%d %H:%M:%S")
+            )
+            header_lines.append(separator)
+            for line in header_lines:
+                self.log(line)
 
-        self._completion_thread = threading.Thread(
-            target=self._wait_for_completion, name="Dirbust-monitor"
-        )
-        self._completion_thread.daemon = True
-        self._completion_thread.start()
+            self._completion_thread = threading.Thread(
+                target=self._wait_for_completion, name="Dirbust-monitor"
+            )
+            self._completion_thread.daemon = True
+            self._completion_thread.start()
+        except Exception:
+            self._set_running(False)
+            raise
 
     def log_scan_footer(self):
         separator = "=" * 63
@@ -376,6 +394,8 @@ class DirbustScanner(object):
         self.log(separator)
 
     def stop(self):
+        if not self.is_running():
+            return
         self._stop_event.set()
         while not self._queue.empty():
             try:
@@ -386,32 +406,41 @@ class DirbustScanner(object):
         for thread in self._threads:
             thread.join(0.2)
         self._threads = []
+        self._set_running(False)
         self.log_scan_footer()
 
     def _wait_for_completion(self):
-        self._queue.join()
-        if self._stop_event.is_set():
-            return
-        self.log_scan_footer()
-        if self.finished_callback:
-            self.finished_callback()
+        try:
+            self._queue.join()
+            if self._stop_event.is_set():
+                return
+            self.log_scan_footer()
+            self._mark_finished()
+        except Exception:
+            self._handle_thread_exception("Dirbust monitor")
+            self._mark_finished()
 
     def _load_wordlist(self, path):
         path = os.path.expanduser(path)
         if not os.path.exists(path):
             self.log("Wordlist %s does not exist" % path)
-            return []
-        lines = []
-        with open(path, "rb") as handle:
-            for raw in handle.readlines():
-                try:
-                    line = raw.decode("utf-8").strip()
-                except Exception:
-                    line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                lines.append(line)
-        return lines
+            return None
+
+        def iterator():
+            with open(path, "rb") as handle:
+                for raw in handle:
+                    try:
+                        line = raw.decode("utf-8").strip()
+                    except Exception:
+                        try:
+                            line = raw.decode("latin-1").strip()
+                        except Exception:
+                            line = raw.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    yield line
+
+        return iterator()
 
     def _setup_target(self, parsed_url):
         self.scheme = parsed_url.scheme
@@ -432,10 +461,9 @@ class DirbustScanner(object):
             self.host, self.port, self.scheme
         )
 
-    def _generate_entries(self, wordlist):
+    def _generate_entries(self, wordlist, cache=None):
         extensions = self.config.extensions or DEFAULT_EXTENSIONS
         seen = set()
-        entries = []
         for raw_word in wordlist:
             base_word = raw_word.strip()
             if not base_word:
@@ -463,8 +491,9 @@ class DirbustScanner(object):
                     continue
                 if normalized not in seen:
                     seen.add(normalized)
-                    entries.append(normalized)
-        return entries
+                    if cache is not None:
+                        cache.append(normalized)
+                    yield normalized
 
     def _worker(self):
         while not self._stop_event.is_set():
@@ -474,6 +503,8 @@ class DirbustScanner(object):
                 continue
             try:
                 self._process_item(item, depth)
+            except Exception:
+                self._handle_thread_exception("Dirbust worker")
             finally:
                 self._queue.task_done()
                 if self.config.delay:
@@ -671,6 +702,34 @@ class DirbustScanner(object):
                 "Failed to build request for %s: %s" % (path, exc)
             )
             return None
+
+    def _handle_thread_exception(self, context):
+        stack = traceback.format_exc()
+        message = "%s encountered an unexpected error.\n%s" % (
+            context,
+            stack,
+        )
+        try:
+            self.callbacks.printError(message)
+        except Exception:
+            pass
+        self.log(
+            "%s encountered an unexpected error. "
+            "See the Extender error tab for details." % context
+        )
+
+    def _mark_finished(self):
+        self._set_running(False)
+        if self.finished_callback:
+            self.finished_callback()
+
+    def _set_running(self, state):
+        with self._state_lock:
+            self._running = state
+
+    def is_running(self):
+        with self._state_lock:
+            return self._running
 
 
 class DirbustPanel(JPanel):
@@ -958,11 +1017,12 @@ class DirbustPanel(JPanel):
     def _start_clicked(self, _event):
         try:
             config = self._build_config()
-            self.extender.start_scan(config)
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
         except Exception as exc:
             self.log("Cannot start scan: %s" % exc)
+            return
+        self.extender.start_scan(config)
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
 
     def _stop_clicked(self, _event):
         self.extender.stop_scan()
@@ -999,7 +1059,8 @@ class DirbustPanel(JPanel):
                 directory_set = True
         if not directory_set:
             chooser.setCurrentDirectory(File(os.path.expanduser("~")))
-        result = chooser.showOpenDialog(self)
+        parent = self.extender.get_burp_frame() or self
+        result = chooser.showOpenDialog(parent)
         if result == JFileChooser.APPROVE_OPTION:
             selected = chooser.getSelectedFile()
             if selected:
@@ -1105,12 +1166,17 @@ class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
         self.helpers = None
         self.panel = None
         self.scanner = None
+        self._burp_frame = None
 
     def registerExtenderCallbacks(self, callbacks):
         self.callbacks = callbacks
         self.helpers = callbacks.getHelpers()
         callbacks.setExtensionName("Dirbust")
         callbacks.registerExtensionStateListener(self)
+        try:
+            self._burp_frame = callbacks.getBurpFrame()
+        except Exception:
+            self._burp_frame = None
         saved_wordlist = (
             callbacks.loadExtensionSetting("dirbust.wordlist_path")
             or ""
@@ -1132,12 +1198,30 @@ class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
             self.scanner.stop()
 
     def start_scan(self, config):
-        self.scanner.configure(config)
-        self.scanner.start()
+        def _run():
+            try:
+                self.scanner.configure(config)
+                self.scanner.start()
+            except Exception as exc:
+                message = "Cannot start scan: %s" % exc
+                if self.callbacks:
+                    try:
+                        self.callbacks.printError(message)
+                    except Exception:
+                        pass
+                if self.panel:
+                    self.panel.log(message)
+                    self.panel.scan_finished()
+
+        launcher = threading.Thread(target=_run, name="Dirbust-launcher")
+        launcher.daemon = True
+        launcher.start()
 
     def stop_scan(self):
         if self.scanner:
             self.scanner.stop()
+            if self.panel:
+                self.panel.scan_finished()
 
     def persist_wordlist(self, path):
         if not self.callbacks:
@@ -1150,3 +1234,6 @@ class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
             self.callbacks.saveExtensionSetting(
                 "dirbust.wordlist_path", None
             )
+
+    def get_burp_frame(self):
+        return self._burp_frame
