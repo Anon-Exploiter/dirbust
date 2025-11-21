@@ -16,6 +16,7 @@ import shlex
 import threading
 import time
 import traceback
+import unicodedata
 
 try:
     import Queue
@@ -110,6 +111,18 @@ def safe_list(value):
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def strip_invisible(text):
+    """Remove zero-width / format characters that often break Burp inputs."""
+    if not text:
+        return ""
+    try:
+        return "".join(
+            ch for ch in text if unicodedata.category(ch) != "Cf"
+        )
+    except Exception:
+        return text
+
+
 class QuietArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that raises instead of exiting."""
 
@@ -178,9 +191,9 @@ class DirbustConfig(object):
         args = parser.parse_args(shlex.split(cli_string))
         config = cls()
         if args.url:
-            config.target_url = args.url.strip()
+            config.target_url = strip_invisible(args.url).strip()
         if args.wordlist:
-            config.wordlist_path = args.wordlist.strip()
+            config.wordlist_path = strip_invisible(args.wordlist).strip()
         if args.extensions:
             config.extensions = safe_list(args.extensions)
         if args.threads:
@@ -984,8 +997,12 @@ class DirbustPanel(JPanel):
 
     def _build_config(self):
         config = DirbustConfig()
-        config.target_url = self.target_field.getText().strip()
-        config.wordlist_path = self.wordlist_field.getText().strip()
+        config.target_url = strip_invisible(
+            self.target_field.getText()
+        ).strip()
+        config.wordlist_path = strip_invisible(
+            self.wordlist_field.getText()
+        ).strip()
         self.extender.persist_wordlist(config.wordlist_path)
         config.extensions = safe_list(self.extensions_field.getText())
         config.method = self.method_combo.getSelectedItem()
@@ -997,8 +1014,12 @@ class DirbustPanel(JPanel):
         config.retries = int(self.retry_spinner.getValue())
         config.delay = float(self.delay_spinner.getValue())
         config.max_depth = int(self.depth_spinner.getValue())
-        config.cookies = self.cookies_field.getText().strip()
-        config.user_agent = self.user_agent_field.getText().strip()
+        config.cookies = strip_invisible(
+            self.cookies_field.getText()
+        ).strip()
+        config.user_agent = strip_invisible(
+            self.user_agent_field.getText()
+        ).strip()
         config.headers = self._collect_headers()
         config.data = self.data_area.getText()
         config.recursive = self.recursive_box.isSelected()
@@ -1065,7 +1086,7 @@ class DirbustPanel(JPanel):
             selected = chooser.getSelectedFile()
             if selected:
                 path = selected.getAbsolutePath()
-                self.wordlist_field.setText(path)
+                self.wordlist_field.setText(strip_invisible(path))
                 self.extender.persist_wordlist(path)
                 parent_path = selected.getParent()
                 if parent_path:
