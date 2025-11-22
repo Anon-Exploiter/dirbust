@@ -123,6 +123,22 @@ def strip_invisible(text):
         return text
 
 
+def normalize_wordlist_entry(text):
+    """Strip control/format characters from wordlist lines."""
+    if not text:
+        return ""
+    cleaned = strip_invisible(text)
+    try:
+        cleaned = "".join(
+            ch
+            for ch in cleaned
+            if unicodedata.category(ch)[0] != "C"
+        )
+    except Exception:
+        pass
+    return cleaned.strip()
+
+
 class QuietArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that raises instead of exiting."""
 
@@ -443,12 +459,15 @@ class DirbustScanner(object):
             with open(path, "rb") as handle:
                 for raw in handle:
                     try:
-                        line = raw.decode("utf-8").strip()
+                        line = raw.decode("utf-8")
                     except Exception:
                         try:
-                            line = raw.decode("latin-1").strip()
+                            line = raw.decode("latin-1")
                         except Exception:
-                            line = raw.strip()
+                            line = raw
+                    if not line:
+                        continue
+                    line = normalize_wordlist_entry(line)
                     if not line or line.startswith("#"):
                         continue
                     yield line
@@ -478,9 +497,7 @@ class DirbustScanner(object):
         extensions = self.config.extensions or DEFAULT_EXTENSIONS
         seen = set()
         for raw_word in wordlist:
-            base_word = raw_word.strip()
-            if not base_word:
-                continue
+            base_word = raw_word
             base_word = base_word.lstrip("/")
             candidates = []
             if "%EXT%" in base_word:
