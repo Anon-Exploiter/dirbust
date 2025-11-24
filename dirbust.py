@@ -139,6 +139,21 @@ def normalize_wordlist_entry(text):
     return cleaned.strip()
 
 
+def percent_encode_path(path):
+    """Percent-encode non-ASCII path segments safely for Burp requests."""
+    if path is None:
+        return ""
+    try:
+        return quote(path, safe="/")
+    except Exception:
+        for encoding in ("utf-8", "latin-1"):
+            try:
+                return quote(path.encode(encoding), safe="/")
+            except Exception:
+                continue
+    return path
+
+
 class QuietArgumentParser(argparse.ArgumentParser):
     """ArgumentParser that raises instead of exiting."""
 
@@ -483,7 +498,7 @@ class DirbustScanner(object):
                 self.port = 443
             else:
                 self.port = 80
-        self.base_path = parsed_url.path or "/"
+        self.base_path = percent_encode_path(parsed_url.path or "/")
         if not self.base_path.endswith("/"):
             self.base_path += "/"
         self.use_https = self.scheme == "https"
@@ -635,13 +650,13 @@ class DirbustScanner(object):
     def _build_path(self, item):
         if item.startswith("http://") or item.startswith("https://"):
             parsed = urlparse(item)
-            return parsed.path or "/"
+            return percent_encode_path(parsed.path or "/")
         if item.startswith("/"):
-            return item
+            return percent_encode_path(item)
         base = self.base_path
         if not base.endswith("/"):
             base += "/"
-        return base + quote(item, safe="/")
+        return base + percent_encode_path(item)
 
     def _resolve_location(self, location):
         if not location:
