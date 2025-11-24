@@ -43,6 +43,7 @@ from javax.swing import JCheckBox
 from javax.swing import JComboBox
 from javax.swing import JFileChooser
 from javax.swing import JLabel
+from javax.swing import JOptionPane
 from javax.swing import JMenuItem
 from javax.swing import JPanel
 from javax.swing import JPopupMenu
@@ -494,6 +495,9 @@ class DirbustScanner(object):
         path = os.path.expanduser(path)
         if not os.path.exists(path):
             self.log("Wordlist %s does not exist" % path)
+            return None
+        if not os.path.isfile(path):
+            self.log("Wordlist %s is not a file" % path)
             return None
 
         def iterator():
@@ -1238,6 +1242,15 @@ class DirbustPanel(JPanel):
         except Exception as exc:
             self.log("Cannot start scan: %s" % exc)
             return
+        if not config.wordlist_path:
+            parent = self.extender.get_burp_frame() or self
+            JOptionPane.showMessageDialog(
+                parent,
+                "Please select a wordlist before starting Dirbust.",
+                "Dirbust",
+                JOptionPane.WARNING_MESSAGE,
+            )
+            return
         self.extender.start_scan(config)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -1429,10 +1442,11 @@ class BurpExtender(
                 self.scanner.start()
             except Exception as exc:
                 message = "Cannot start scan: %s" % exc
-                printed = self._safe_print(message, to_error=True)
-                if self.panel and not printed:
+                if self.panel:
                     self.panel.log(message)
                     self.panel.scan_finished()
+                else:
+                    self._safe_print(message, to_error=False)
 
         launcher = threading.Thread(
             target=_run, name="Dirbust-launcher"
