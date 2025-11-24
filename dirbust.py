@@ -90,6 +90,7 @@ DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 )
+TAB_HIGHLIGHT_COLOR = Color(242, 119, 76)
 
 
 def safe_int_list(value):
@@ -329,7 +330,6 @@ class DirbustScanner(object):
         self._state_lock = threading.Lock()
         self._running = False
         self._https_upgraded = False
-        self._start_messages = []
         self._visited = set()
         self.config = None
         self._wordlist_entries = []
@@ -352,7 +352,6 @@ class DirbustScanner(object):
             raise RuntimeError("Dirbust scan already running")
         self._set_running(True)
         self._https_upgraded = False
-        self._start_messages = []
         try:
             if not self.config:
                 raise ValueError("Scanner not configured")
@@ -552,20 +551,13 @@ class DirbustScanner(object):
             status = analyzed.getStatusCode()
             if status not in (301, 302, 307, 308):
                 return None
-            location = self._extract_location(analyzed.getHeaders())
-            if not location:
+            redirect = self._parse_https_redirect(analyzed.getHeaders())
+            if not redirect:
                 return None
-            parsed = urlparse(location)
-            if parsed.scheme.lower() != "https":
-                return None
-            if parsed.hostname and parsed.hostname != self.host:
-                return None
+            parsed, location = redirect
             upgraded = self._apply_https_upgrade(parsed)
             if upgraded:
-                return (
-                    "Upgraded to HTTPS due to initial redirect to %s"
-                    % location
-                )
+                return self._log_https_upgrade(location, defer=True)
         except Exception as exc:
             self.log("HTTPS probe failed: %s" % exc)
         return None
@@ -751,6 +743,17 @@ class DirbustScanner(object):
                 return header.split(":", 1)[1].strip()
         return None
 
+    def _parse_https_redirect(self, headers):
+        location = self._extract_location(headers)
+        if not location:
+            return None
+        parsed = urlparse(location)
+        if parsed.scheme.lower() != "https":
+            return None
+        if parsed.hostname and parsed.hostname != self.host:
+            return None
+        return parsed, location
+
     def _apply_https_upgrade(self, parsed):
         if self.use_https or self._https_upgraded:
             return False
@@ -772,29 +775,28 @@ class DirbustScanner(object):
             self._https_upgraded = True
         return True
 
+    def _log_https_upgrade(self, location, defer=False):
+        message = "Upgraded to HTTPS due to redirect to %s" % location
+        if defer:
+            return message
+        try:
+            self.callbacks.printOutput(message)
+        except Exception:
+            self.log(message)
+        return message
+
     def _maybe_upgrade_to_https(self, status, headers, path, depth):
         if self.use_https or self._https_upgraded:
             return False
         if status not in (301, 302, 307, 308):
             return False
-        location = self._extract_location(headers)
-        if not location:
+        redirect = self._parse_https_redirect(headers)
+        if not redirect:
             return False
-        parsed = urlparse(location)
-        if parsed.scheme.lower() != "https":
-            return False
-        if parsed.hostname and parsed.hostname != self.host:
-            return False
+        parsed, location = redirect
         if not self._apply_https_upgrade(parsed):
             return False
-        try:
-            self.callbacks.printOutput(
-                "Switching to HTTPS due to redirect to %s" % location
-            )
-        except Exception:
-            self.log(
-                "Switching to HTTPS due to redirect to %s" % location
-            )
+        self._log_https_upgrade(location)
         with self._lock:
             if path in self._visited:
                 self._visited.remove(path)
@@ -1144,7 +1146,7 @@ class DirbustPanel(JPanel):
 
         SwingUtilities.invokeLater(_SwingRunnable(apply))
 
-    def _highlight_tab(self, color=Color(242, 119, 76)):
+    def _highlight_tab(self, color=TAB_HIGHLIGHT_COLOR):
         def do_highlight():
             try:
                 tabbed = SwingUtilities.getAncestorOfClass(
@@ -1427,12 +1429,8 @@ class BurpExtender(
                 self.scanner.start()
             except Exception as exc:
                 message = "Cannot start scan: %s" % exc
-                if self.callbacks:
-                    try:
-                        self.callbacks.printError(message)
-                    except Exception:
-                        pass
-                if self.panel:
+                printed = self._safe_print(message, to_error=True)
+                if self.panel and not printed:
                     self.panel.log(message)
                     self.panel.scan_finished()
 
@@ -1477,16 +1475,25 @@ class BurpExtender(
                 if details and self.panel:
                     self.panel.populate_from_message(details)
             except Exception as exc:
-                try:
-                    self.callbacks.printError(
-                        "Failed to send to Dirbust: %s" % exc
-                    )
-                except Exception:
-                    pass
+                self._safe_print(
+                    "Failed to send to Dirbust: %s" % exc, to_error=True
+                )
 
         item = JMenuItem("Send to Dirbust")
         item.addActionListener(lambda _evt: _send())
         return [item]
+
+    def _safe_print(self, message, to_error=False):
+        if not self.callbacks:
+            return False
+        try:
+            if to_error:
+                self.callbacks.printError(message)
+            else:
+                self.callbacks.printOutput(message)
+            return True
+        except Exception:
+            return False
 
     def _build_details_from_message(self, message):
         if not message:
