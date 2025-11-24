@@ -139,6 +139,16 @@ def normalize_wordlist_entry(text):
     return cleaned.strip()
 
 
+def normalize_target_url(raw):
+    """Ensure a scheme is present so urlparse yields netloc/path correctly."""
+    cleaned = strip_invisible(raw or "").strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith("http://") or cleaned.startswith("https://"):
+        return cleaned
+    return "http://%s" % cleaned
+
+
 def percent_encode_path(path):
     """Percent-encode non-ASCII path segments safely for Burp requests."""
     if path is None:
@@ -222,7 +232,7 @@ class DirbustConfig(object):
         args = parser.parse_args(shlex.split(cli_string))
         config = cls()
         if args.url:
-            config.target_url = strip_invisible(args.url).strip()
+            config.target_url = normalize_target_url(args.url)
         if args.wordlist:
             config.wordlist_path = strip_invisible(args.wordlist).strip()
         if args.extensions:
@@ -313,6 +323,8 @@ class DirbustScanner(object):
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._running = False
+        self._https_upgraded = False
+        self._start_messages = []
         self._visited = set()
         self.config = None
         self._wordlist_entries = []
@@ -334,6 +346,8 @@ class DirbustScanner(object):
         if self.is_running():
             raise RuntimeError("Dirbust scan already running")
         self._set_running(True)
+        self._https_upgraded = False
+        self._start_messages = []
         try:
             if not self.config:
                 raise ValueError("Scanner not configured")
@@ -351,6 +365,7 @@ class DirbustScanner(object):
             if not parsed.scheme or not parsed.netloc:
                 raise ValueError("Invalid target URL")
             self._setup_target(parsed)
+            upgrade_note = self._probe_https_upgrade()
             self._stop_event.clear()
             self._threads = []
             self._queue = Queue.Queue()
@@ -420,6 +435,8 @@ class DirbustScanner(object):
             header_lines.append(separator)
             for line in header_lines:
                 self.log(line)
+            if upgrade_note:
+                self.log(upgrade_note)
 
             self._completion_thread = threading.Thread(
                 target=self._wait_for_completion,
@@ -508,6 +525,41 @@ class DirbustScanner(object):
             self.host, self.port, self.scheme
         )
 
+    def _probe_https_upgrade(self):
+        if self.use_https:
+            return None
+        try:
+            request_bytes = self._build_request(self.base_path or "/")
+            if not request_bytes:
+                return None
+            response = self.callbacks.makeHttpRequest(
+                self.service, request_bytes
+            )
+            raw_response = response.getResponse()
+            if raw_response is None:
+                return None
+            analyzed = self.helpers.analyzeResponse(raw_response)
+            status = analyzed.getStatusCode()
+            if status not in (301, 302, 307, 308):
+                return None
+            location = self._extract_location(analyzed.getHeaders())
+            if not location:
+                return None
+            parsed = urlparse(location)
+            if parsed.scheme.lower() != "https":
+                return None
+            if parsed.hostname and parsed.hostname != self.host:
+                return None
+            upgraded = self._apply_https_upgrade(parsed)
+            if upgraded:
+                return (
+                    "Upgraded to HTTPS due to initial redirect to %s"
+                    % location
+                )
+        except Exception as exc:
+            self.log("HTTPS probe failed: %s" % exc)
+        return None
+
     def _generate_entries(self, wordlist, cache=None):
         extensions = self.config.extensions or DEFAULT_EXTENSIONS
         seen = set()
@@ -591,6 +643,10 @@ class DirbustScanner(object):
         length = len(raw_response) - body_offset
         body_bytes = raw_response[body_offset:]
         body_text = self.helpers.bytesToString(body_bytes)
+        if self._maybe_upgrade_to_https(
+            status, analyzed.getHeaders(), path, depth
+        ):
+            return
         if self._should_skip(status, length, body_text):
             return
         message = self._format_result(status, length, path)
@@ -680,6 +736,54 @@ class DirbustScanner(object):
             if lower.startswith("location:"):
                 return header.split(":", 1)[1].strip()
         return None
+
+    def _apply_https_upgrade(self, parsed):
+        if self.use_https or self._https_upgraded:
+            return False
+        with self._lock:
+            if self.use_https or self._https_upgraded:
+                return False
+            self.scheme = "https"
+            self.use_https = True
+            self.port = parsed.port or 443
+            self.host_header = parsed.netloc or self.host_header
+            self.base_url = "https://%s" % self.host_header
+            if parsed.path:
+                self.base_path = percent_encode_path(parsed.path)
+                if not self.base_path.endswith("/"):
+                    self.base_path += "/"
+            self.service = self.helpers.buildHttpService(
+                self.host, self.port, self.scheme
+            )
+            self._https_upgraded = True
+        return True
+
+    def _maybe_upgrade_to_https(self, status, headers, path, depth):
+        if self.use_https or self._https_upgraded:
+            return False
+        if status not in (301, 302, 307, 308):
+            return False
+        location = self._extract_location(headers)
+        if not location:
+            return False
+        parsed = urlparse(location)
+        if parsed.scheme.lower() != "https":
+            return False
+        if parsed.hostname and parsed.hostname != self.host:
+            return False
+        if not self._apply_https_upgrade(parsed):
+            return False
+        try:
+            self.callbacks.printOutput(
+                "Switching to HTTPS due to redirect to %s" % location
+            )
+        except Exception:
+            self.log("Switching to HTTPS due to redirect to %s" % location)
+        with self._lock:
+            if path in self._visited:
+                self._visited.remove(path)
+        self._queue.put((path, depth))
+        return True
 
     def _format_result(self, status, length, path):
         timestamp = time.strftime("[%H:%M:%S]")
@@ -1029,9 +1133,9 @@ class DirbustPanel(JPanel):
 
     def _build_config(self):
         config = DirbustConfig()
-        config.target_url = strip_invisible(
+        config.target_url = normalize_target_url(
             self.target_field.getText()
-        ).strip()
+        )
         config.wordlist_path = strip_invisible(
             self.wordlist_field.getText()
         ).strip()
