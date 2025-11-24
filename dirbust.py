@@ -133,9 +133,7 @@ def normalize_wordlist_entry(text):
     cleaned = strip_invisible(text)
     try:
         cleaned = "".join(
-            ch
-            for ch in cleaned
-            if unicodedata.category(ch)[0] != "C"
+            ch for ch in cleaned if unicodedata.category(ch)[0] != "C"
         )
     except Exception:
         pass
@@ -147,7 +145,9 @@ def normalize_target_url(raw):
     cleaned = strip_invisible(raw or "").strip()
     if not cleaned:
         return ""
-    if cleaned.startswith("http://") or cleaned.startswith("https://"):
+    if cleaned.startswith("http://") or cleaned.startswith(
+        "https://"
+    ):
         return cleaned
     return "http://%s" % cleaned
 
@@ -237,7 +237,9 @@ class DirbustConfig(object):
         if args.url:
             config.target_url = normalize_target_url(args.url)
         if args.wordlist:
-            config.wordlist_path = strip_invisible(args.wordlist).strip()
+            config.wordlist_path = strip_invisible(
+                args.wordlist
+            ).strip()
         if args.extensions:
             config.extensions = safe_list(args.extensions)
         if args.threads:
@@ -418,7 +420,7 @@ class DirbustScanner(object):
             ]
             header_lines = [
                 separator,
-                "Dirbust v0.0.1 by @syed__umar",
+                "Dirbust v0.0.2 by @syed__umar",
                 separator,
             ]
             header_lines.extend(
@@ -454,8 +456,12 @@ class DirbustScanner(object):
     def log_scan_footer(self):
         separator = "=" * 63
         self.log(separator)
-        status = "Stopped" if self._stop_event.is_set() else "Finished"
-        self.log("%s %s" % (time.strftime("%Y/%m/%d %H:%M:%S"), status))
+        status = (
+            "Stopped" if self._stop_event.is_set() else "Finished"
+        )
+        self.log(
+            "%s %s" % (time.strftime("%Y/%m/%d %H:%M:%S"), status)
+        )
         self.log(separator)
 
     def stop(self):
@@ -786,7 +792,9 @@ class DirbustScanner(object):
                 "Switching to HTTPS due to redirect to %s" % location
             )
         except Exception:
-            self.log("Switching to HTTPS due to redirect to %s" % location)
+            self.log(
+                "Switching to HTTPS due to redirect to %s" % location
+            )
         with self._lock:
             if path in self._visited:
                 self._visited.remove(path)
@@ -1119,7 +1127,9 @@ class DirbustPanel(JPanel):
                 self.wordlist_field.setText(details["wordlist_path"])
             if details.get("method"):
                 try:
-                    self.method_combo.setSelectedItem(details["method"])
+                    self.method_combo.setSelectedItem(
+                        details["method"]
+                    )
                 except Exception:
                     pass
             if details.get("headers_text"):
@@ -1131,6 +1141,7 @@ class DirbustPanel(JPanel):
             if details.get("data"):
                 self.data_area.setText(details["data"])
             self._highlight_tab()
+
         SwingUtilities.invokeLater(_SwingRunnable(apply))
 
     def _highlight_tab(self, color=Color(242, 119, 76)):
@@ -1460,7 +1471,9 @@ class BurpExtender(
 
         def _send():
             try:
-                details = self._build_details_from_message(messages[0])
+                details = self._build_details_from_message(
+                    messages[0]
+                )
                 if details and self.panel:
                     self.panel.populate_from_message(details)
             except Exception as exc:
@@ -1499,7 +1512,7 @@ class BurpExtender(
         target_url += base_path
 
         headers = info.getHeaders()
-        body = request[info.getBodyOffset():]
+        body = request[info.getBodyOffset() :]
         body_text = self.helpers.bytesToString(body) if body else ""
 
         cookies = ""
