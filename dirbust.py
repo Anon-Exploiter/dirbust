@@ -454,7 +454,8 @@ class DirbustScanner(object):
     def log_scan_footer(self):
         separator = "=" * 63
         self.log(separator)
-        self.log("%s Finished" % (time.strftime("%Y/%m/%d %H:%M:%S")))
+        status = "Stopped" if self._stop_event.is_set() else "Finished"
+        self.log("%s %s" % (time.strftime("%Y/%m/%d %H:%M:%S"), status))
         self.log(separator)
 
     def stop(self):
