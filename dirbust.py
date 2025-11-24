@@ -26,6 +26,7 @@ except ImportError:
 from burp import IBurpExtender
 from burp import ITab
 from burp import IExtensionStateListener
+from burp import IContextMenuFactory
 from java.awt import BorderLayout
 from java.awt import Color
 from java.awt import Dimension
@@ -42,11 +43,13 @@ from javax.swing import JCheckBox
 from javax.swing import JComboBox
 from javax.swing import JFileChooser
 from javax.swing import JLabel
+from javax.swing import JMenuItem
 from javax.swing import JPanel
 from javax.swing import JPopupMenu
 from javax.swing import JScrollPane
 from javax.swing import JSplitPane
 from javax.swing import JSpinner
+from javax.swing import JTabbedPane
 from javax.swing import JTextArea
 from javax.swing import JTextField
 from javax.swing import JTextPane
@@ -1107,6 +1110,46 @@ class DirbustPanel(JPanel):
         self.start_button.addActionListener(self._start_clicked)
         self.stop_button.addActionListener(self._stop_clicked)
 
+    def populate_from_message(self, details):
+        def apply():
+            if details.get("target_url"):
+                self.target_field.setText(details["target_url"])
+            if details.get("wordlist_path"):
+                self.wordlist_field.setText(details["wordlist_path"])
+            if details.get("method"):
+                try:
+                    self.method_combo.setSelectedItem(details["method"])
+                except Exception:
+                    pass
+            if details.get("headers_text"):
+                self.headers_area.setText(details["headers_text"])
+            if details.get("cookies"):
+                self.cookies_field.setText(details["cookies"])
+            if details.get("user_agent"):
+                self.user_agent_field.setText(details["user_agent"])
+            if details.get("data"):
+                self.data_area.setText(details["data"])
+            self._highlight_tab()
+        SwingUtilities.invokeLater(_SwingRunnable(apply))
+
+    def _highlight_tab(self, color=Color(242, 119, 76)):
+        def do_highlight():
+            try:
+                tabbed = SwingUtilities.getAncestorOfClass(
+                    JTabbedPane, self
+                )
+                if tabbed is None:
+                    return
+                idx = tabbed.indexOfComponent(self)
+                if idx == -1:
+                    return
+                tabbed.setBackgroundAt(idx, color)
+                tabbed.setForegroundAt(idx, Color.BLACK)
+            except Exception:
+                pass
+
+        SwingUtilities.invokeLater(_SwingRunnable(do_highlight))
+
     def log(self, message, color=None):
         def append():
             try:
@@ -1319,7 +1362,9 @@ class DirbustPanel(JPanel):
             self.log_area.setText("")
 
 
-class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
+class BurpExtender(
+    IBurpExtender, ITab, IExtensionStateListener, IContextMenuFactory
+):
     """Entry point for Burp Suite."""
 
     def __init__(self):
@@ -1347,6 +1392,11 @@ class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
             callbacks, self.panel.log, self.panel.scan_finished
         )
         callbacks.addSuiteTab(self)
+        callbacks.registerContextMenuFactory(self)
+        try:
+            callbacks.customizeUiComponent(self.panel)
+        except Exception:
+            pass
 
     def getTabCaption(self):
         return "Dirbust"
@@ -1400,3 +1450,80 @@ class BurpExtender(IBurpExtender, ITab, IExtensionStateListener):
 
     def get_burp_frame(self):
         return self._burp_frame
+
+    # IContextMenuFactory
+    def createMenuItems(self, invocation):
+        messages = invocation.getSelectedMessages()
+        if not messages:
+            return None
+
+        def _send():
+            try:
+                details = self._build_details_from_message(messages[0])
+                if details and self.panel:
+                    self.panel.populate_from_message(details)
+            except Exception as exc:
+                try:
+                    self.callbacks.printError(
+                        "Failed to send to Dirbust: %s" % exc
+                    )
+                except Exception:
+                    pass
+
+        item = JMenuItem("Send to Dirbust")
+        item.addActionListener(lambda _evt: _send())
+        return [item]
+
+    def _build_details_from_message(self, message):
+        if not message:
+            return None
+        service = message.getHttpService()
+        request = message.getRequest()
+        if not request:
+            return None
+        info = self.helpers.analyzeRequest(service, request)
+        url = info.getUrl()
+        if not url:
+            return None
+        protocol = url.getProtocol() or service.getProtocol()
+        host = url.getHost() or service.getHost()
+        port = url.getPort() or service.getPort()
+        path = url.getPath() or "/"
+        base_path = path
+        if "/" in path:
+            base_path = path[: path.rfind("/") + 1]
+        target_url = "%s://%s" % (protocol, host)
+        if port and port not in (80, 443):
+            target_url = "%s:%s" % (target_url, port)
+        target_url += base_path
+
+        headers = info.getHeaders()
+        body = request[info.getBodyOffset():]
+        body_text = self.helpers.bytesToString(body) if body else ""
+
+        cookies = ""
+        user_agent = ""
+        filtered_headers = []
+        for idx, header in enumerate(headers):
+            # skip request line (e.g., "GET / HTTP/1.1")
+            if idx == 0:
+                continue
+            lower = header.lower()
+            if lower.startswith("host:"):
+                continue
+            if lower.startswith("cookie:"):
+                cookies = header.split(":", 1)[1].strip()
+                continue
+            if lower.startswith("user-agent:"):
+                user_agent = header.split(":", 1)[1].strip()
+                continue
+            filtered_headers.append(header)
+
+        return {
+            "target_url": target_url,
+            "method": info.getMethod(),
+            "headers_text": "\n".join(filtered_headers),
+            "cookies": cookies,
+            "user_agent": user_agent,
+            "data": body_text,
+        }
