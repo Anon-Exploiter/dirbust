@@ -595,7 +595,9 @@ class DirbustScanner(object):
         analyzed = self.helpers.analyzeResponse(raw_response)
         status = analyzed.getStatusCode()
         body_offset = analyzed.getBodyOffset()
-        length = len(raw_response) - body_offset
+        length = self._content_length(analyzed.getHeaders())
+        if length is None:
+            length = len(raw_response) - body_offset
         body_bytes = raw_response[body_offset:]
         body_text = self.helpers.bytesToString(body_bytes)
         if self._maybe_upgrade_to_https(status, analyzed.getHeaders(), path, depth):
@@ -760,6 +762,22 @@ class DirbustScanner(object):
         if 500 <= status <= 599:
             return Color(255, 140, 0)  # orange
         return Color(0, 0, 0)
+
+    @staticmethod
+    def _content_length(headers):
+        if not headers:
+            return None
+        for header in headers:
+            lower = header.lower()
+            if not lower.startswith("content-length:"):
+                continue
+            try:
+                value = header.split(":", 1)[1].strip()
+                if value:
+                    return int(value)
+            except Exception:
+                return None
+        return None
 
     def _emit_result(
         self,
@@ -993,6 +1011,8 @@ class DirbustPanel(JPanel):
         self.log_area.setComponentPopupMenu(self.log_popup)
         self.log_scroll.setComponentPopupMenu(self.log_popup)
         self.matches_popup = JPopupMenu()
+        self.exclude_length_action = self._ExcludeLengthAction(self)
+        self.matches_popup.add(self.exclude_length_action)
         self.matches_popup.add(self.clear_action)
         self.matches_table.setComponentPopupMenu(self.matches_popup)
         self.wordlist_browse.addActionListener(self._browse_wordlist)
@@ -1448,6 +1468,14 @@ class DirbustPanel(JPanel):
                 return
             self.panel._update_match_detail()
 
+    class _ExcludeLengthAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Exclude this length")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            self.panel._exclude_selected_length()
+
     def _initialize_component_sizes(self):
         for field in (
             self.target_field,
@@ -1516,17 +1544,69 @@ class DirbustPanel(JPanel):
                 doc = self.log_area.getStyledDocument()
                 doc.remove(0, doc.getLength())
             except Exception:
-                pass
-            try:
-                self.log_area.setText("")
-            except Exception:
-                pass
+                try:
+                    self.log_area.setText("")
+                except Exception:
+                    pass
             try:
                 self.log_area.setCaretPosition(0)
             except Exception:
                 pass
 
         SwingUtilities.invokeLater(_SwingRunnable(clear))
+
+    def _exclude_selected_length(self):
+        row = self.matches_table.getSelectedRow()
+        if row < 0:
+            return
+        try:
+            model_row = self.matches_table.convertRowIndexToModel(row)
+        except Exception:
+            model_row = row
+        if model_row < 0 or model_row >= len(self.match_results):
+            return
+        entry = self.match_results[model_row]
+        length = entry.get("length")
+        if length is None:
+            return
+        cli_text = self.cli_args_area.getText() or ""
+        addition = "--exclude-sizes %s" % length
+        if addition not in cli_text:
+            if cli_text and not cli_text.endswith("\n"):
+                cli_text += "\n"
+            cli_text += addition
+            self.cli_args_area.setText(cli_text)
+        try:
+            self.log("Will exclude length %s on next scan" % length)
+        except Exception:
+            pass
+
+    def _remove_matches_by_length(self, length):
+        removed = False
+        for idx in range(len(self.match_results) - 1, -1, -1):
+            entry = self.match_results[idx]
+            if entry.get("length") != length:
+                continue
+            try:
+                self.matches_model.removeRow(idx)
+            except Exception:
+                pass
+            try:
+                del self.match_results[idx]
+            except Exception:
+                pass
+            removed = True
+        if removed:
+            try:
+                self.matches_table.clearSelection()
+            except Exception:
+                pass
+            try:
+                self.message_controller.set_entry(None)
+                self.request_editor.setMessage(None, True)
+                self.response_editor.setMessage(None, False)
+            except Exception:
+                pass
 
 
 class BurpExtender(
