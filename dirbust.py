@@ -84,19 +84,8 @@ class _SwingRunnable(Runnable):
         self.fn()
 
 
-DEFAULT_EXTENSIONS = [
-    "php",
-    "asp",
-    "aspx",
-    "jsp",
-    "html",
-    "js",
-    "txt",
-]
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
-)
+DEFAULT_EXTENSIONS = ["php", "asp", "aspx", "jsp", "html", "js", "txt"]
+DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 TAB_HIGHLIGHT_COLOR = Color(242, 119, 76)
 
 
@@ -127,9 +116,7 @@ def strip_invisible(text):
     if not text:
         return ""
     try:
-        return "".join(
-            ch for ch in text if unicodedata.category(ch) != "Cf"
-        )
+        return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
     except Exception:
         return text
 
@@ -140,9 +127,7 @@ def normalize_wordlist_entry(text):
         return ""
     cleaned = strip_invisible(text)
     try:
-        cleaned = "".join(
-            ch for ch in cleaned if unicodedata.category(ch)[0] != "C"
-        )
+        cleaned = "".join(ch for ch in cleaned if unicodedata.category(ch)[0] != "C")
     except Exception:
         pass
     return cleaned.strip()
@@ -153,9 +138,7 @@ def normalize_target_url(raw):
     cleaned = strip_invisible(raw or "").strip()
     if not cleaned:
         return ""
-    if cleaned.startswith("http://") or cleaned.startswith(
-        "https://"
-    ):
+    if cleaned.startswith("http://") or cleaned.startswith("https://"):
         return cleaned
     return "http://%s" % cleaned
 
@@ -212,9 +195,7 @@ class DirbustConfig(object):
 
     @classmethod
     def from_cli(cls, cli_string):
-        parser = QuietArgumentParser(
-            prog="burp-dirbust", add_help=False
-        )
+        parser = QuietArgumentParser(prog="burp-dirbust", add_help=False)
         parser.add_argument("-u", "--url")
         parser.add_argument("-w", "--wordlist")
         parser.add_argument("-e", "--extensions")
@@ -224,9 +205,7 @@ class DirbustConfig(object):
         parser.add_argument("--include-status")
         parser.add_argument("--exclude-status")
         parser.add_argument("--exclude-sizes")
-        parser.add_argument(
-            "--exclude-text", dest="exclude_text", action="append"
-        )
+        parser.add_argument("--exclude-text", dest="exclude_text", action="append")
         parser.add_argument("-m", "--http-method", dest="method")
         parser.add_argument("-H", "--header", action="append")
         parser.add_argument("--cookie")
@@ -245,9 +224,7 @@ class DirbustConfig(object):
         if args.url:
             config.target_url = normalize_target_url(args.url)
         if args.wordlist:
-            config.wordlist_path = strip_invisible(
-                args.wordlist
-            ).strip()
+            config.wordlist_path = strip_invisible(args.wordlist).strip()
         if args.extensions:
             config.extensions = safe_list(args.extensions)
         if args.threads:
@@ -271,9 +248,7 @@ class DirbustConfig(object):
             for header in args.header:
                 parts = header.split(":", 1)
                 if len(parts) == 2:
-                    config.headers.append(
-                        (parts[0].strip(), parts[1].strip())
-                    )
+                    config.headers.append((parts[0].strip(), parts[1].strip()))
         if args.cookie:
             config.cookies = args.cookie
         if args.user_agent:
@@ -310,10 +285,7 @@ class DirbustConfig(object):
             value = getattr(other, name)
             if value is None:
                 continue
-            if (
-                isinstance(value, (list, tuple, set, dict))
-                and not value
-            ):
+            if isinstance(value, (list, tuple, set, dict)) and not value:
                 continue
             if isinstance(value, (str,)) and value == "":
                 continue
@@ -372,9 +344,7 @@ class DirbustScanner(object):
             if not self.config.wordlist_path:
                 raise ValueError("Wordlist path is required")
             entry_cache = [] if self.config.recursive else None
-            wordlist_iter = self._load_wordlist(
-                self.config.wordlist_path
-            )
+            wordlist_iter = self._load_wordlist(self.config.wordlist_path)
             if wordlist_iter is None:
                 raise ValueError("Wordlist is empty or unreadable")
             parsed = urlparse(self.config.target_url)
@@ -387,9 +357,7 @@ class DirbustScanner(object):
             self._queue = Queue.Queue()
             self._visited = set()
             has_entries = False
-            for entry in self._generate_entries(
-                wordlist_iter, entry_cache
-            ):
+            for entry in self._generate_entries(wordlist_iter, entry_cache):
                 has_entries = True
                 path = self._build_path(entry)
                 self._queue.put((path, 0))
@@ -397,9 +365,7 @@ class DirbustScanner(object):
                 raise ValueError("Wordlist is empty or unreadable")
             self._wordlist_entries = entry_cache or tuple()
             for _ in range(self.config.threads):
-                thread = threading.Thread(
-                    target=self._worker, name="Dirbust-worker"
-                )
+                thread = threading.Thread(target=self._worker, name="Dirbust-worker")
                 thread.daemon = True
                 thread.start()
                 self._threads.append(thread)
@@ -414,15 +380,7 @@ class DirbustScanner(object):
                 ("[+] Method:", self.config.method),
                 (
                     "[+] Excluded Codes:",
-                    ", ".join(
-                        [
-                            str(x)
-                            for x in sorted(
-                                self.config.exclude_status
-                            )
-                        ]
-                    )
-                    or "-",
+                    ", ".join([str(x) for x in sorted(self.config.exclude_status)]) or "-",
                 ),
                 ("[+] Threads:", str(self.config.threads)),
                 ("[+] Timeout:", "%ss" % int(self.config.timeout)),
@@ -434,30 +392,16 @@ class DirbustScanner(object):
                 "Dirbust v0.0.3 by @syed__umar",
                 separator,
             ]
-            header_lines.extend(
-                [
-                    "{label} {value}".format(
-                        label=label,
-                        value=value,
-                    )
-                    for label, value in fields
-                ]
-            )
+            header_lines.extend(["{label} {value}".format(label=label, value=value) for label, value in fields])
             header_lines.append(separator)
-            header_lines.append(
-                "%s Starting Dirbust"
-                % time.strftime("%Y/%m/%d %H:%M:%S")
-            )
+            header_lines.append("%s Starting Dirbust" % time.strftime("%Y/%m/%d %H:%M:%S"))
             header_lines.append(separator)
             for line in header_lines:
                 self.log(line)
             if upgrade_note:
                 self.log(upgrade_note)
 
-            self._completion_thread = threading.Thread(
-                target=self._wait_for_completion,
-                name="Dirbust-monitor",
-            )
+            self._completion_thread = threading.Thread(target=self._wait_for_completion, name="Dirbust-monitor")
             self._completion_thread.daemon = True
             self._completion_thread.start()
         except Exception:
@@ -467,12 +411,8 @@ class DirbustScanner(object):
     def log_scan_footer(self):
         separator = "=" * 63
         self.log(separator)
-        status = (
-            "Stopped" if self._stop_event.is_set() else "Finished"
-        )
-        self.log(
-            "%s %s" % (time.strftime("%Y/%m/%d %H:%M:%S"), status)
-        )
+        status = "Stopped" if self._stop_event.is_set() else "Finished"
+        self.log("%s %s" % (time.strftime("%Y/%m/%d %H:%M:%S"), status))
         self.log(separator)
 
     def stop(self):
@@ -556,9 +496,7 @@ class DirbustScanner(object):
             request_bytes = self._build_request(self.base_path or "/")
             if not request_bytes:
                 return None
-            response = self.callbacks.makeHttpRequest(
-                self.service, request_bytes
-            )
+            response = self.callbacks.makeHttpRequest(self.service, request_bytes)
             raw_response = response.getResponse()
             if raw_response is None:
                 return None
@@ -566,9 +504,7 @@ class DirbustScanner(object):
             status = analyzed.getStatusCode()
             if status not in (301, 302, 307, 308):
                 return None
-            redirect = self._parse_https_redirect(
-                analyzed.getHeaders()
-            )
+            redirect = self._parse_https_redirect(analyzed.getHeaders())
             if not redirect:
                 return None
             parsed, location = redirect
@@ -580,11 +516,7 @@ class DirbustScanner(object):
         return None
 
     def _generate_entries(self, wordlist, cache=None):
-        extensions = (
-            self.config.extensions
-            if self.config.extensions is not None
-            else DEFAULT_EXTENSIONS
-        )
+        extensions = self.config.extensions if self.config.extensions is not None else DEFAULT_EXTENSIONS
         seen = set()
         for raw_word in wordlist:
             base_word = raw_word
@@ -599,9 +531,7 @@ class DirbustScanner(object):
                 if "." not in stripped:
                     for ext in extensions:
                         candidates.append("%s.%s" % (stripped, ext))
-                if "." not in stripped and not base_word.endswith(
-                    "/"
-                ):
+                if "." not in stripped and not base_word.endswith("/"):
                     candidates.append(stripped + "/")
             for candidate in candidates:
                 normalized = candidate.strip()
@@ -645,16 +575,12 @@ class DirbustScanner(object):
         response = None
         while attempt <= self.config.retries:
             try:
-                response = self.callbacks.makeHttpRequest(
-                    self.service, request_bytes
-                )
+                response = self.callbacks.makeHttpRequest(self.service, request_bytes)
                 break
             except Exception as exc:
                 attempt += 1
                 if attempt > self.config.retries:
-                    self.log(
-                        "Request failed for %s: %s" % (path, exc)
-                    )
+                    self.log("Request failed for %s: %s" % (path, exc))
                     return
                 time.sleep(0.5)
         raw_response = response.getResponse()
@@ -666,30 +592,17 @@ class DirbustScanner(object):
         length = len(raw_response) - body_offset
         body_bytes = raw_response[body_offset:]
         body_text = self.helpers.bytesToString(body_bytes)
-        if self._maybe_upgrade_to_https(
-            status, analyzed.getHeaders(), path, depth
-        ):
+        if self._maybe_upgrade_to_https(status, analyzed.getHeaders(), path, depth):
             return
         if self._should_skip(status, length, body_text):
             return
         message = self._format_result(status, length, path)
         self.log(message, self._status_color(status))
-        self._emit_result(
-            status, length, path, request_bytes, raw_response, body_text
-        )
+        self._emit_result(status, length, path, request_bytes, raw_response, body_text)
         if self.config.recursive and depth < self.config.max_depth:
-            if (
-                status in self.config.recursive_status
-                or path.endswith("/")
-            ):
+            if status in self.config.recursive_status or path.endswith("/"):
                 self._enqueue_recursion(path, depth + 1)
-        if self.config.follow_redirects and status in (
-            301,
-            302,
-            303,
-            307,
-            308,
-        ):
+        if self.config.follow_redirects and status in (301, 302, 303, 307, 308):
             location = self._extract_location(analyzed.getHeaders())
             redirected = self._resolve_location(location)
             if redirected:
@@ -708,20 +621,11 @@ class DirbustScanner(object):
             self._queue.put((new_path, depth))
 
     def _should_skip(self, status, length, body_text):
-        if (
-            self.config.include_status
-            and status not in self.config.include_status
-        ):
+        if self.config.include_status and status not in self.config.include_status:
             return True
-        if (
-            self.config.exclude_status
-            and status in self.config.exclude_status
-        ):
+        if self.config.exclude_status and status in self.config.exclude_status:
             return True
-        if (
-            self.config.exclude_sizes
-            and length in self.config.exclude_sizes
-        ):
+        if self.config.exclude_sizes and length in self.config.exclude_sizes:
             return True
         if self.config.exclude_texts:
             for needle in self.config.exclude_texts:
@@ -744,9 +648,7 @@ class DirbustScanner(object):
         if not location:
             return None
         location = location.strip()
-        if location.startswith("http://") or location.startswith(
-            "https://"
-        ):
+        if location.startswith("http://") or location.startswith("https://"):
             parsed = urlparse(location)
             if parsed.hostname != self.host:
                 return None
@@ -789,9 +691,7 @@ class DirbustScanner(object):
                 self.base_path = percent_encode_path(parsed.path)
                 if not self.base_path.endswith("/"):
                     self.base_path += "/"
-            self.service = self.helpers.buildHttpService(
-                self.host, self.port, self.scheme
-            )
+            self.service = self.helpers.buildHttpService(self.host, self.port, self.scheme)
             self._https_upgraded = True
         return True
 
@@ -914,12 +814,8 @@ class DirbustScanner(object):
                     title = self._extract_title(body_text)
             except Exception:
                 pass
-            request_text = self.helpers.bytesToString(
-                request_bytes or b""
-            )
-            response_text = self.helpers.bytesToString(
-                raw_response or b""
-            )
+            request_text = self.helpers.bytesToString(request_bytes or b"")
+            response_text = self.helpers.bytesToString(raw_response or b"")
             entry = {
                 "status": status,
                 "length": length,
@@ -995,9 +891,7 @@ class DirbustScanner(object):
 
     def _build_request(self, path):
         try:
-            request_lines = [
-                "%s %s HTTP/1.1" % (self.config.method, path)
-            ]
+            request_lines = ["%s %s HTTP/1.1" % (self.config.method, path)]
             request_lines.append("Host: %s" % self.host_header)
             headers = dict(self.config.headers)
             if "User-Agent" not in headers:
@@ -1013,25 +907,17 @@ class DirbustScanner(object):
                 request += self.config.data
             return self.helpers.stringToBytes(request)
         except Exception as exc:
-            self.log(
-                "Failed to build request for %s: %s" % (path, exc)
-            )
+            self.log("Failed to build request for %s: %s" % (path, exc))
             return None
 
     def _handle_thread_exception(self, context):
         stack = traceback.format_exc()
-        message = "%s encountered an unexpected error.\n%s" % (
-            context,
-            stack,
-        )
+        message = "%s encountered an unexpected error.\n%s" % (context, stack)
         try:
             self.callbacks.printError(message)
         except Exception:
             pass
-        self.log(
-            "%s encountered an unexpected error. "
-            "See the Extender error tab for details." % context
-        )
+        self.log("%s encountered an unexpected error. See the Extender error tab for details." % context)
 
     def _mark_finished(self):
         self._set_running(False)
@@ -1068,25 +954,15 @@ class DirbustPanel(JPanel):
         self.target_field = JTextField("", 24)
         self.wordlist_field = JTextField(self.saved_wordlist, 24)
         self.wordlist_browse = JButton("Browse...")
-        self.extensions_field = JTextField(
-            ",".join(DEFAULT_EXTENSIONS), 24
-        )
+        self.extensions_field = JTextField(",".join(DEFAULT_EXTENSIONS), 24)
         self.method_combo = JComboBox(["GET", "HEAD", "POST"])
         self.recursive_box = JCheckBox("Recursive", False)
-        self.follow_redirects_box = JCheckBox(
-            "Follow redirects", False
-        )
+        self.follow_redirects_box = JCheckBox("Follow redirects", False)
         self.exclude_status_field = JTextField("403,404", 24)
-        self.timeout_spinner = JSpinner(
-            SpinnerNumberModel(10.0, 1.0, 300.0, 1.0)
-        )
-        self.thread_spinner = JSpinner(
-            SpinnerNumberModel(25, 1, 128, 1)
-        )
+        self.timeout_spinner = JSpinner(SpinnerNumberModel(10.0, 1.0, 300.0, 1.0))
+        self.thread_spinner = JSpinner(SpinnerNumberModel(25, 1, 128, 1))
         self.retry_spinner = JSpinner(SpinnerNumberModel(1, 0, 10, 1))
-        self.delay_spinner = JSpinner(
-            SpinnerNumberModel(0.0, 0.0, 60.0, 0.25)
-        )
+        self.delay_spinner = JSpinner(SpinnerNumberModel(0.0, 0.0, 60.0, 0.25))
         self.depth_spinner = JSpinner(SpinnerNumberModel(3, 1, 10, 1))
         self.headers_area = JTextArea(4, 40)
         self.cookies_field = JTextField("", 24)
@@ -1098,20 +974,12 @@ class DirbustPanel(JPanel):
         self.match_results = []
         self.matches_model = self._build_matches_model()
         self.matches_table = JTable(self.matches_model)
-        self.matches_table.setSelectionMode(
-            ListSelectionModel.SINGLE_SELECTION
-        )
-        self.matches_table.getSelectionModel().addListSelectionListener(
-            self._MatchSelectionListener(self)
-        )
+        self.matches_table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        self.matches_table.getSelectionModel().addListSelectionListener(self._MatchSelectionListener(self))
         self._configure_matches_table()
         self.message_controller = self._MessageEditorController(self)
-        self.request_editor = self.callbacks.createMessageEditor(
-            self.message_controller, False
-        )
-        self.response_editor = self.callbacks.createMessageEditor(
-            self.message_controller, False
-        )
+        self.request_editor = self.callbacks.createMessageEditor(self.message_controller, False)
+        self.response_editor = self.callbacks.createMessageEditor(self.message_controller, False)
         self.log_popup = JPopupMenu()
         self.log_popup.add(self._ClearLogAction(self))
         self.log_area.setComponentPopupMenu(self.log_popup)
@@ -1131,9 +999,7 @@ class DirbustPanel(JPanel):
         left_row = [1]
         right_row = [0]
 
-        def add_row(
-            target, row_holder, label, component, expand=False
-        ):
+        def add_row(target, row_holder, label, component, expand=False):
             label_constraints = GridBagConstraints()
             label_constraints.gridx = 0
             label_constraints.gridy = row_holder[0]
@@ -1146,11 +1012,7 @@ class DirbustPanel(JPanel):
             value_constraints.gridy = row_holder[0]
             value_constraints.insets = Insets(4, 4, 4, 4)
             value_constraints.weightx = 1.0 if expand else 0.0
-            value_constraints.fill = (
-                GridBagConstraints.HORIZONTAL
-                if expand
-                else GridBagConstraints.NONE
-            )
+            value_constraints.fill = GridBagConstraints.HORIZONTAL if expand else GridBagConstraints.NONE
             target.add(component, value_constraints)
             row_holder[0] += 1
 
@@ -1169,62 +1031,25 @@ class DirbustPanel(JPanel):
         wl_constraints.fill = GridBagConstraints.NONE
         wordlist_panel.add(self.wordlist_browse, wl_constraints)
 
-        add_row(
-            left_form, left_row, "Target URL", self.target_field, True
-        )
-        add_row(
-            left_form, left_row, "Wordlist path", wordlist_panel, True
-        )
-        add_row(
-            left_form,
-            left_row,
-            "Extensions",
-            self.extensions_field,
-            True,
-        )
+        add_row(left_form, left_row, "Target URL", self.target_field, True)
+        add_row(left_form, left_row, "Wordlist path", wordlist_panel, True)
+        add_row(left_form, left_row, "Extensions", self.extensions_field, True)
         add_row(left_form, left_row, "HTTP method", self.method_combo)
-        add_row(
-            left_form,
-            left_row,
-            "Exclude status",
-            self.exclude_status_field,
-        )
+        add_row(left_form, left_row, "Exclude status", self.exclude_status_field)
         add_row(left_form, left_row, "Threads", self.thread_spinner)
         add_row(left_form, left_row, "Timeout", self.timeout_spinner)
         add_row(left_form, left_row, "Retries", self.retry_spinner)
         add_row(left_form, left_row, "Delay", self.delay_spinner)
         add_row(left_form, left_row, "Max depth", self.depth_spinner)
-        add_row(
-            right_form, right_row, "Cookies", self.cookies_field, True
-        )
-        add_row(
-            right_form,
-            right_row,
-            "User-Agent",
-            self.user_agent_field,
-            True,
-        )
+        add_row(right_form, right_row, "Cookies", self.cookies_field, True)
+        add_row(right_form, right_row, "User-Agent", self.user_agent_field, True)
         self.headers_scroll = JScrollPane(self.headers_area)
         self.data_scroll = JScrollPane(self.data_area)
         self.cli_scroll = JScrollPane(self.cli_args_area)
         self._initialize_component_sizes()
-        add_row(
-            right_form,
-            right_row,
-            "Headers (k: v)",
-            self.headers_scroll,
-            True,
-        )
-        add_row(
-            right_form, right_row, "POST data", self.data_scroll, True
-        )
-        add_row(
-            right_form,
-            right_row,
-            "CLI arguments",
-            self.cli_scroll,
-            True,
-        )
+        add_row(right_form, right_row, "Headers (k: v)", self.headers_scroll, True)
+        add_row(right_form, right_row, "POST data", self.data_scroll, True)
+        add_row(right_form, right_row, "CLI arguments", self.cli_scroll, True)
         options_panel = JPanel(FlowLayout(FlowLayout.LEFT))
         options_panel.add(self.recursive_box)
         options_panel.add(self.follow_redirects_box)
@@ -1260,9 +1085,7 @@ class DirbustPanel(JPanel):
 
         form_wrapper = JPanel(FlowLayout(FlowLayout.CENTER, 0, 10))
         form_wrapper.add(forms_panel)
-        button_container = JPanel(
-            FlowLayout(FlowLayout.CENTER, 10, 5)
-        )
+        button_container = JPanel(FlowLayout(FlowLayout.CENTER, 10, 5))
         button_container.add(button_panel)
         content_panel = JPanel(BorderLayout())
         content_panel.add(form_wrapper, BorderLayout.CENTER)
@@ -1272,26 +1095,14 @@ class DirbustPanel(JPanel):
 
         log_panel = JPanel()
         log_panel.setLayout(BorderLayout())
-        log_panel.setBorder(
-            BorderFactory.createTitledBorder("Results")
-        )
+        log_panel.setBorder(BorderFactory.createTitledBorder("Results"))
         request_panel = JPanel(BorderLayout())
-        request_panel.setBorder(
-            BorderFactory.createTitledBorder("Request")
-        )
-        request_panel.add(
-            self.request_editor.getComponent(), BorderLayout.CENTER
-        )
+        request_panel.setBorder(BorderFactory.createTitledBorder("Request"))
+        request_panel.add(self.request_editor.getComponent(), BorderLayout.CENTER)
         response_panel = JPanel(BorderLayout())
-        response_panel.setBorder(
-            BorderFactory.createTitledBorder("Response")
-        )
-        response_panel.add(
-            self.response_editor.getComponent(), BorderLayout.CENTER
-        )
-        detail_splitter = JSplitPane(
-            JSplitPane.HORIZONTAL_SPLIT, request_panel, response_panel
-        )
+        response_panel.setBorder(BorderFactory.createTitledBorder("Response"))
+        response_panel.add(self.response_editor.getComponent(), BorderLayout.CENTER)
+        detail_splitter = JSplitPane(JSplitPane.HORIZONTAL_SPLIT, request_panel, response_panel)
         detail_splitter.setResizeWeight(0.5)
         matches_splitter = JSplitPane(
             JSplitPane.VERTICAL_SPLIT,
@@ -1305,9 +1116,7 @@ class DirbustPanel(JPanel):
         results_tabs.addTab("Responses", matches_splitter)
         log_panel.add(results_tabs, BorderLayout.CENTER)
 
-        splitter = JSplitPane(
-            JSplitPane.VERTICAL_SPLIT, upper_panel, log_panel
-        )
+        splitter = JSplitPane(JSplitPane.VERTICAL_SPLIT, upper_panel, log_panel)
         splitter.setResizeWeight(0.5)
         splitter.setOneTouchExpandable(True)
         self.add(splitter, BorderLayout.CENTER)
@@ -1323,9 +1132,7 @@ class DirbustPanel(JPanel):
                 self.wordlist_field.setText(details["wordlist_path"])
             if details.get("method"):
                 try:
-                    self.method_combo.setSelectedItem(
-                        details["method"]
-                    )
+                    self.method_combo.setSelectedItem(details["method"])
                 except Exception:
                     pass
             if details.get("headers_text"):
@@ -1343,9 +1150,7 @@ class DirbustPanel(JPanel):
     def _highlight_tab(self, color=TAB_HIGHLIGHT_COLOR):
         def do_highlight():
             try:
-                tabbed = SwingUtilities.getAncestorOfClass(
-                    JTabbedPane, self
-                )
+                tabbed = SwingUtilities.getAncestorOfClass(JTabbedPane, self)
                 if tabbed is None:
                     return
                 idx = tabbed.indexOfComponent(self)
@@ -1363,12 +1168,8 @@ class DirbustPanel(JPanel):
             try:
                 doc = self.log_area.getStyledDocument()
                 attrs = SimpleAttributeSet()
-                StyleConstants.setForeground(
-                    attrs, color or Color.BLACK
-                )
-                doc.insertString(
-                    doc.getLength(), message + "\n", attrs
-                )
+                StyleConstants.setForeground(attrs, color or Color.BLACK)
+                doc.insertString(doc.getLength(), message + "\n", attrs)
                 self.log_area.setCaretPosition(doc.getLength())
             except Exception:
                 pass
@@ -1388,35 +1189,23 @@ class DirbustPanel(JPanel):
 
     def _build_config(self):
         config = DirbustConfig()
-        config.target_url = normalize_target_url(
-            self.target_field.getText()
-        )
-        config.wordlist_path = strip_invisible(
-            self.wordlist_field.getText()
-        ).strip()
+        config.target_url = normalize_target_url(self.target_field.getText())
+        config.wordlist_path = strip_invisible(self.wordlist_field.getText()).strip()
         self.extender.persist_wordlist(config.wordlist_path)
         config.extensions = safe_list(self.extensions_field.getText())
         config.method = self.method_combo.getSelectedItem()
-        config.exclude_status = safe_int_list(
-            self.exclude_status_field.getText()
-        )
+        config.exclude_status = safe_int_list(self.exclude_status_field.getText())
         config.threads = int(self.thread_spinner.getValue())
         config.timeout = float(self.timeout_spinner.getValue())
         config.retries = int(self.retry_spinner.getValue())
         config.delay = float(self.delay_spinner.getValue())
         config.max_depth = int(self.depth_spinner.getValue())
-        config.cookies = strip_invisible(
-            self.cookies_field.getText()
-        ).strip()
-        config.user_agent = strip_invisible(
-            self.user_agent_field.getText()
-        ).strip()
+        config.cookies = strip_invisible(self.cookies_field.getText()).strip()
+        config.user_agent = strip_invisible(self.user_agent_field.getText()).strip()
         config.headers = self._collect_headers()
         config.data = self.data_area.getText()
         config.recursive = self.recursive_box.isSelected()
-        config.follow_redirects = (
-            self.follow_redirects_box.isSelected()
-        )
+        config.follow_redirects = self.follow_redirects_box.isSelected()
         cli_args = self.cli_args_area.getText().strip()
         if cli_args:
             try:
@@ -1462,12 +1251,8 @@ class DirbustPanel(JPanel):
         chooser.setDialogTitle("Select wordlist")
         current_path = self.wordlist_field.getText().strip()
         directory_set = False
-        if self.last_wordlist_directory and os.path.isdir(
-            self.last_wordlist_directory
-        ):
-            chooser.setCurrentDirectory(
-                File(self.last_wordlist_directory)
-            )
+        if self.last_wordlist_directory and os.path.isdir(self.last_wordlist_directory):
+            chooser.setCurrentDirectory(File(self.last_wordlist_directory))
             directory_set = True
         elif current_path:
             candidate = File(current_path)
@@ -1512,13 +1297,9 @@ class DirbustPanel(JPanel):
                 except (CannotUndoException, CannotRedoException):
                     pass
 
-        component.getInputMap().put(
-            KeyStroke.getKeyStroke("control Z"), "Undo"
-        )
+        component.getInputMap().put(KeyStroke.getKeyStroke("control Z"), "Undo")
         component.getActionMap().put("Undo", _UndoAction(True))
-        component.getInputMap().put(
-            KeyStroke.getKeyStroke("control Y"), "Redo"
-        )
+        component.getInputMap().put(KeyStroke.getKeyStroke("control Y"), "Redo")
         component.getActionMap().put("Redo", _UndoAction(False))
         self._undo_managers.append(manager)
 
@@ -1550,9 +1331,7 @@ class DirbustPanel(JPanel):
             )
             last = self.matches_model.getRowCount() - 1
             if last >= 0:
-                self.matches_table.setRowSelectionInterval(
-                    last, last
-                )
+                self.matches_table.setRowSelectionInterval(last, last)
                 self._update_match_detail(last)
 
         SwingUtilities.invokeLater(_SwingRunnable(append))
@@ -1569,12 +1348,8 @@ class DirbustPanel(JPanel):
             return
         entry = self.match_results[index]
         self.message_controller.set_entry(entry)
-        self.request_editor.setMessage(
-            entry.get("request_bytes") or b"", True
-        )
-        self.response_editor.setMessage(
-            entry.get("response_bytes") or b"", False
-        )
+        self.request_editor.setMessage(entry.get("request_bytes") or b"", True)
+        self.response_editor.setMessage(entry.get("response_bytes") or b"", False)
 
     def _build_matches_model(self):
         class _Model(DefaultTableModel):
@@ -1615,9 +1390,7 @@ class DirbustPanel(JPanel):
         try:
             model = self.matches_table.getColumnModel()
             for name, width in column_widths.items():
-                idx = self.matches_table.getColumnModel().getColumnIndex(
-                    name
-                )
+                idx = self.matches_table.getColumnModel().getColumnIndex(name)
                 column = model.getColumn(idx)
                 column.setPreferredWidth(width)
         except Exception:
@@ -1744,10 +1517,7 @@ class BurpExtender(
             self._burp_frame = callbacks.getBurpFrame()
         except Exception:
             self._burp_frame = None
-        saved_wordlist = (
-            callbacks.loadExtensionSetting("dirbust.wordlist_path")
-            or ""
-        )
+        saved_wordlist = callbacks.loadExtensionSetting("dirbust.wordlist_path") or ""
         self.panel = DirbustPanel(self, saved_wordlist)
         self.scanner = DirbustScanner(
             callbacks,
@@ -1785,9 +1555,7 @@ class BurpExtender(
                 else:
                     self._safe_print(message, to_error=False)
 
-        launcher = threading.Thread(
-            target=_run, name="Dirbust-launcher"
-        )
+        launcher = threading.Thread(target=_run, name="Dirbust-launcher")
         launcher.daemon = True
         launcher.start()
 
@@ -1801,13 +1569,9 @@ class BurpExtender(
         if not self.callbacks:
             return
         if path:
-            self.callbacks.saveExtensionSetting(
-                "dirbust.wordlist_path", path
-            )
+            self.callbacks.saveExtensionSetting("dirbust.wordlist_path", path)
         else:
-            self.callbacks.saveExtensionSetting(
-                "dirbust.wordlist_path", None
-            )
+            self.callbacks.saveExtensionSetting("dirbust.wordlist_path", None)
 
     def get_burp_frame(self):
         return self._burp_frame
@@ -1820,16 +1584,11 @@ class BurpExtender(
 
         def _send():
             try:
-                details = self._build_details_from_message(
-                    messages[0]
-                )
+                details = self._build_details_from_message(messages[0])
                 if details and self.panel:
                     self.panel.populate_from_message(details)
             except Exception as exc:
-                self._safe_print(
-                    "Failed to send to Dirbust: %s" % exc,
-                    to_error=True,
-                )
+                self._safe_print("Failed to send to Dirbust: %s" % exc, to_error=True)
 
         item = JMenuItem("Send to Dirbust")
         item.addActionListener(lambda _evt: _send())
