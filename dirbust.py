@@ -516,15 +516,21 @@ class DirbustScanner(object):
         return None
 
     def _generate_entries(self, wordlist, cache=None):
-        extensions = self.config.extensions if self.config.extensions is not None else DEFAULT_EXTENSIONS
+        if self.config.extensions is None:
+            extensions = DEFAULT_EXTENSIONS
+        else:
+            extensions = self.config.extensions
         seen = set()
         for raw_word in wordlist:
             base_word = raw_word
             base_word = base_word.lstrip("/")
             candidates = []
             if "%EXT%" in base_word:
-                for ext in extensions:
-                    candidates.append(base_word.replace("%EXT%", ext))
+                if extensions:
+                    for ext in extensions:
+                        candidates.append(base_word.replace("%EXT%", ext))
+                else:
+                    candidates.append(base_word.replace("%EXT%", ""))
             else:
                 candidates.append(base_word)
                 stripped = base_word.rstrip("/")
