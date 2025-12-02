@@ -13,6 +13,7 @@ from __future__ import print_function
 import argparse
 import os
 import shlex
+import re
 import threading
 import time
 import traceback
@@ -27,6 +28,7 @@ from burp import IBurpExtender
 from burp import ITab
 from burp import IExtensionStateListener
 from burp import IContextMenuFactory
+from burp import IMessageEditorController
 from java.awt import BorderLayout
 from java.awt import Color
 from java.awt import Dimension
@@ -49,14 +51,18 @@ from javax.swing import JPanel
 from javax.swing import JPopupMenu
 from javax.swing import JScrollPane
 from javax.swing import JSplitPane
+from javax.swing import JTable
 from javax.swing import JSpinner
 from javax.swing import JTabbedPane
 from javax.swing import JTextArea
 from javax.swing import JTextField
 from javax.swing import JTextPane
 from javax.swing import KeyStroke
+from javax.swing import ListSelectionModel
 from javax.swing import SpinnerNumberModel
 from javax.swing import SwingUtilities
+from javax.swing.event import ListSelectionListener
+from javax.swing.table import DefaultTableModel
 from javax.swing.text import SimpleAttributeSet
 from javax.swing.text import StyleConstants
 from javax.swing.undo import CannotRedoException
@@ -318,11 +324,16 @@ class DirbustScanner(object):
     """Worker manager that performs dictionary brute force."""
 
     def __init__(
-        self, callbacks, ui_callback, finished_callback=None
+        self,
+        callbacks,
+        ui_callback,
+        result_callback=None,
+        finished_callback=None,
     ):
         self.callbacks = callbacks
         self.helpers = callbacks.getHelpers()
         self.ui_callback = ui_callback
+        self.result_callback = result_callback
         self.finished_callback = finished_callback
         self._threads = []
         self._queue = Queue.Queue()
@@ -555,7 +566,9 @@ class DirbustScanner(object):
             status = analyzed.getStatusCode()
             if status not in (301, 302, 307, 308):
                 return None
-            redirect = self._parse_https_redirect(analyzed.getHeaders())
+            redirect = self._parse_https_redirect(
+                analyzed.getHeaders()
+            )
             if not redirect:
                 return None
             parsed, location = redirect
@@ -661,6 +674,9 @@ class DirbustScanner(object):
             return
         message = self._format_result(status, length, path)
         self.log(message, self._status_color(status))
+        self._emit_result(
+            status, length, path, request_bytes, raw_response, body_text
+        )
         if self.config.recursive and depth < self.config.max_depth:
             if (
                 status in self.config.recursive_status
@@ -839,6 +855,100 @@ class DirbustScanner(object):
             return Color(255, 140, 0)  # orange
         return Color(0, 0, 0)
 
+    def _emit_result(
+        self,
+        status,
+        length,
+        path,
+        request_bytes,
+        raw_response,
+        body_text=None,
+    ):
+        if not self.result_callback:
+            return
+        try:
+            request_info = None
+            response_info = None
+            path_only = path
+            params_count = 0
+            method = self.config.method
+            mime_type = ""
+            extension = ""
+            title = ""
+            cookies_count = ""
+            listener_port = self.port
+            tls = "yes" if self.use_https else ""
+            time_str = time.strftime("%H:%M:%S %d %b %Y")
+            service_host = self.service.getHost() if self.service else ""
+            try:
+                if request_bytes:
+                    request_info = self.helpers.analyzeRequest(
+                        self.service, request_bytes
+                    )
+                    method = request_info.getMethod() or method
+                    url_obj = request_info.getUrl()
+                    if url_obj:
+                        path_only = url_obj.getPath() or url_obj.toString()
+                    params_count = len(
+                        request_info.getParameters() or []
+                    )
+                    cookies_count = self._count_cookies(
+                        request_info.getHeaders() or []
+                    )
+                    extension = self._guess_extension(path_only)
+            except Exception:
+                pass
+            try:
+                if raw_response:
+                    response_info = self.helpers.analyzeResponse(
+                        raw_response
+                    )
+                    mime_type = (
+                        response_info.getStatedMimeType()
+                        or response_info.getInferredMimeType()
+                        or ""
+                    )
+                    body_offset = response_info.getBodyOffset()
+                    body = raw_response[body_offset:]
+                    body_text = self.helpers.bytesToString(body)
+                    title = self._extract_title(body_text)
+            except Exception:
+                pass
+            request_text = self.helpers.bytesToString(
+                request_bytes or b""
+            )
+            response_text = self.helpers.bytesToString(
+                raw_response or b""
+            )
+            entry = {
+                "status": status,
+                "length": length,
+                "length_human": self._human_size(length),
+                "url": self._full_url(path),
+                "host": self.base_url,
+                "method": method,
+                "path": path_only,
+                "params": params_count,
+                "edited": "",
+                "mime": mime_type,
+                "extension": extension,
+                "title": title,
+                "notes": "",
+                "tls": tls,
+                "ip": service_host,
+                "cookies": cookies_count,
+                "time": time_str,
+                "listener_port": listener_port,
+                "request_text": request_text,
+                "response_text": response_text,
+                "request_bytes": request_bytes,
+                "response_bytes": raw_response,
+                "service": self.service,
+            }
+            self.result_callback(entry)
+        except Exception:
+            self._handle_thread_exception("Result handler")
+
     @staticmethod
     def _human_size(size):
         if size >= 1024 * 1024:
@@ -848,6 +958,40 @@ class DirbustScanner(object):
             value = size / 1024.0
             return "%.1fKB" % value
         return "%dB" % size
+
+    @staticmethod
+    def _guess_extension(path):
+        if not path:
+            return ""
+        if "." not in path:
+            return ""
+        candidate = path.rsplit(".", 1)[-1]
+        candidate = candidate.split("/", 1)[0]
+        return candidate
+
+    @staticmethod
+    def _count_cookies(headers):
+        if not headers:
+            return ""
+        for header in headers:
+            lower = header.lower()
+            if lower.startswith("cookie:"):
+                cookies = header.split(":", 1)[1].strip()
+                if not cookies:
+                    return "0"
+                return str(len([c for c in cookies.split(";") if c.strip()]))
+        return ""
+
+    @staticmethod
+    def _extract_title(body_text):
+        if not body_text:
+            return ""
+        match = re.search(r"<title>(.*?)</title>", body_text, re.I | re.S)
+        if not match:
+            return ""
+        title = match.group(1).strip()
+        title = re.sub(r"\s+", " ", title)
+        return title[:120]
 
     def _build_request(self, path):
         try:
@@ -909,6 +1053,7 @@ class DirbustPanel(JPanel):
     def __init__(self, extender, saved_wordlist=""):
         JPanel.__init__(self)
         self.extender = extender
+        self.callbacks = extender.callbacks
         self.saved_wordlist = saved_wordlist or ""
         self.setLayout(BorderLayout(5, 5))
         self._undo_managers = []
@@ -950,6 +1095,23 @@ class DirbustPanel(JPanel):
         self.cli_args_area = JTextArea(4, 40)
         self.log_area = JTextPane()
         self.log_area.setEditable(False)
+        self.match_results = []
+        self.matches_model = self._build_matches_model()
+        self.matches_table = JTable(self.matches_model)
+        self.matches_table.setSelectionMode(
+            ListSelectionModel.SINGLE_SELECTION
+        )
+        self.matches_table.getSelectionModel().addListSelectionListener(
+            self._MatchSelectionListener(self)
+        )
+        self._configure_matches_table()
+        self.message_controller = self._MessageEditorController(self)
+        self.request_editor = self.callbacks.createMessageEditor(
+            self.message_controller, False
+        )
+        self.response_editor = self.callbacks.createMessageEditor(
+            self.message_controller, False
+        )
         self.log_popup = JPopupMenu()
         self.log_popup.add(self._ClearLogAction(self))
         self.log_area.setComponentPopupMenu(self.log_popup)
@@ -1113,7 +1275,35 @@ class DirbustPanel(JPanel):
         log_panel.setBorder(
             BorderFactory.createTitledBorder("Results")
         )
-        log_panel.add(JScrollPane(self.log_area), BorderLayout.CENTER)
+        request_panel = JPanel(BorderLayout())
+        request_panel.setBorder(
+            BorderFactory.createTitledBorder("Request")
+        )
+        request_panel.add(
+            self.request_editor.getComponent(), BorderLayout.CENTER
+        )
+        response_panel = JPanel(BorderLayout())
+        response_panel.setBorder(
+            BorderFactory.createTitledBorder("Response")
+        )
+        response_panel.add(
+            self.response_editor.getComponent(), BorderLayout.CENTER
+        )
+        detail_splitter = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT, request_panel, response_panel
+        )
+        detail_splitter.setResizeWeight(0.5)
+        matches_splitter = JSplitPane(
+            JSplitPane.VERTICAL_SPLIT,
+            JScrollPane(self.matches_table),
+            detail_splitter,
+        )
+        matches_splitter.setResizeWeight(0.35)
+
+        results_tabs = JTabbedPane()
+        results_tabs.addTab("Output", JScrollPane(self.log_area))
+        results_tabs.addTab("Responses", matches_splitter)
+        log_panel.add(results_tabs, BorderLayout.CENTER)
 
         splitter = JSplitPane(
             JSplitPane.VERTICAL_SPLIT, upper_panel, log_panel
@@ -1332,6 +1522,130 @@ class DirbustPanel(JPanel):
         component.getActionMap().put("Redo", _UndoAction(False))
         self._undo_managers.append(manager)
 
+    def add_match_result(self, entry):
+        def append():
+            row_number = len(self.match_results) + 1
+            entry["row"] = row_number
+            self.match_results.append(entry)
+            self.matches_model.addRow(
+                [
+                    row_number,
+                    entry.get("host", ""),
+                    entry.get("method", ""),
+                    entry.get("path", ""),
+                    entry.get("params", ""),
+                    entry.get("edited", ""),
+                    entry.get("status", ""),
+                    entry.get("length", ""),
+                    entry.get("mime", ""),
+                    entry.get("extension", ""),
+                    entry.get("title", ""),
+                    entry.get("notes", ""),
+                    entry.get("tls", ""),
+                    entry.get("ip", ""),
+                    entry.get("cookies", ""),
+                    entry.get("time", ""),
+                    entry.get("listener_port", ""),
+                ]
+            )
+            last = self.matches_model.getRowCount() - 1
+            if last >= 0:
+                self.matches_table.setRowSelectionInterval(
+                    last, last
+                )
+                self._update_match_detail(last)
+
+        SwingUtilities.invokeLater(_SwingRunnable(append))
+
+    def _update_match_detail(self, index=None):
+        if index is None:
+            index = self.matches_table.getSelectedRow()
+        if index is None or index < 0:
+            self.message_controller.set_entry(None)
+            self.request_editor.setMessage(None, True)
+            self.response_editor.setMessage(None, False)
+            return
+        if index >= len(self.match_results):
+            return
+        entry = self.match_results[index]
+        self.message_controller.set_entry(entry)
+        self.request_editor.setMessage(
+            entry.get("request_bytes") or b"", True
+        )
+        self.response_editor.setMessage(
+            entry.get("response_bytes") or b"", False
+        )
+
+    def _build_matches_model(self):
+        class _Model(DefaultTableModel):
+            def isCellEditable(self, _row, _column):
+                return False
+
+        return _Model(
+            [
+                "#",
+                "Host",
+                "Method",
+                "URL",
+                "Params",
+                "Edited",
+                "Status",
+                "Length",
+                "MIME type",
+                "Extension",
+                "Title",
+                "Notes",
+                "TLS",
+                "IP",
+                "Cookies",
+                "Time",
+                "Listener port",
+            ],
+            0,
+        )
+
+    def _configure_matches_table(self):
+        self.matches_table.setAutoCreateRowSorter(True)
+        column_widths = {
+            "#": 40,
+            "Host": 220,
+            "URL": 260,
+            "Title": 240,
+        }
+        try:
+            model = self.matches_table.getColumnModel()
+            for name, width in column_widths.items():
+                idx = self.matches_table.getColumnModel().getColumnIndex(
+                    name
+                )
+                column = model.getColumn(idx)
+                column.setPreferredWidth(width)
+        except Exception:
+            pass
+
+    class _MessageEditorController(IMessageEditorController):
+        def __init__(self, panel):
+            self.panel = panel
+            self.entry = None
+
+        def set_entry(self, entry):
+            self.entry = entry
+
+        def getHttpService(self):
+            if not self.entry:
+                return None
+            return self.entry.get("service")
+
+        def getRequest(self):
+            if not self.entry:
+                return None
+            return self.entry.get("request_bytes")
+
+        def getResponse(self):
+            if not self.entry:
+                return None
+            return self.entry.get("response_bytes")
+
     class _ClearLogAction(AbstractAction):
         def __init__(self, panel):
             AbstractAction.__init__(self, "Clear results")
@@ -1339,6 +1653,15 @@ class DirbustPanel(JPanel):
 
         def actionPerformed(self, _event):
             self.panel._clear_log()
+
+    class _MatchSelectionListener(ListSelectionListener):
+        def __init__(self, panel):
+            self.panel = panel
+
+        def valueChanged(self, event):
+            if event.getValueIsAdjusting():
+                return
+            self.panel._update_match_detail()
 
     def _initialize_component_sizes(self):
         for field in (
@@ -1382,11 +1705,22 @@ class DirbustPanel(JPanel):
         scroll.setMinimumSize(size)
 
     def _clear_log(self):
+        self._clear_matches()
         try:
             doc = self.log_area.getStyledDocument()
             doc.remove(0, doc.getLength())
         except Exception:
             self.log_area.setText("")
+
+    def _clear_matches(self):
+        try:
+            self.matches_model.setRowCount(0)
+        except Exception:
+            pass
+        self.match_results = []
+        self.message_controller.set_entry(None)
+        self.request_editor.setMessage(None, True)
+        self.response_editor.setMessage(None, False)
 
 
 class BurpExtender(
@@ -1416,7 +1750,10 @@ class BurpExtender(
         )
         self.panel = DirbustPanel(self, saved_wordlist)
         self.scanner = DirbustScanner(
-            callbacks, self.panel.log, self.panel.scan_finished
+            callbacks,
+            self.panel.log,
+            self.panel.add_match_result,
+            self.panel.scan_finished,
         )
         callbacks.addSuiteTab(self)
         callbacks.registerContextMenuFactory(self)
@@ -1490,7 +1827,8 @@ class BurpExtender(
                     self.panel.populate_from_message(details)
             except Exception as exc:
                 self._safe_print(
-                    "Failed to send to Dirbust: %s" % exc, to_error=True
+                    "Failed to send to Dirbust: %s" % exc,
+                    to_error=True,
                 )
 
         item = JMenuItem("Send to Dirbust")
