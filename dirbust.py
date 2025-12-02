@@ -185,7 +185,7 @@ class DirbustConfig(object):
         self.user_agent = DEFAULT_USER_AGENT
         self.data = ""
         self.follow_redirects = False
-        self.timeout = 10.0
+        self.timeout = 5.0
         self.retries = 1
         self.delay = 0.0
         self.rate = 0
@@ -965,7 +965,7 @@ class DirbustPanel(JPanel):
         self.recursive_box = JCheckBox("Recursive", False)
         self.follow_redirects_box = JCheckBox("Follow redirects", False)
         self.exclude_status_field = JTextField("403,404", 24)
-        self.timeout_spinner = JSpinner(SpinnerNumberModel(10.0, 1.0, 300.0, 1.0))
+        self.timeout_spinner = JSpinner(SpinnerNumberModel(5.0, 1.0, 300.0, 1.0))
         self.thread_spinner = JSpinner(SpinnerNumberModel(25, 1, 128, 1))
         self.retry_spinner = JSpinner(SpinnerNumberModel(1, 0, 10, 1))
         self.delay_spinner = JSpinner(SpinnerNumberModel(0.0, 0.0, 60.0, 0.25))
