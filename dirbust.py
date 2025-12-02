@@ -1118,7 +1118,7 @@ class DirbustPanel(JPanel):
         matches_splitter.setResizeWeight(0.35)
 
         results_tabs = JTabbedPane()
-        results_tabs.addTab("Output", JScrollPane(self.log_area))
+        results_tabs.addTab("Output", self.log_scroll)
         results_tabs.addTab("Responses", matches_splitter)
         log_panel.add(results_tabs, BorderLayout.CENTER)
 
@@ -1431,7 +1431,7 @@ class DirbustPanel(JPanel):
             self.panel = panel
 
         def actionPerformed(self, _event):
-            self.panel._clear_log()
+            self.panel._clear_all_results()
 
     class _MatchSelectionListener(ListSelectionListener):
         def __init__(self, panel):
@@ -1483,11 +1483,6 @@ class DirbustPanel(JPanel):
         size = scroll.getPreferredSize()
         scroll.setMinimumSize(size)
 
-    def _clear_log(self):
-        self._clear_matches()
-        try:
-            doc = self.log_area.getStyledDocument()
-            doc.remove(0, doc.getLength())
     def _clear_all_results(self):
         def clear():
             try:
