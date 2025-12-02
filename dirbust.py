@@ -971,6 +971,7 @@ class DirbustPanel(JPanel):
         self.cli_args_area = JTextArea(4, 40)
         self.log_area = JTextPane()
         self.log_area.setEditable(False)
+        self.log_scroll = JScrollPane(self.log_area)
         self.match_results = []
         self.matches_model = self._build_matches_model()
         self.matches_table = JTable(self.matches_model)
@@ -981,8 +982,13 @@ class DirbustPanel(JPanel):
         self.request_editor = self.callbacks.createMessageEditor(self.message_controller, False)
         self.response_editor = self.callbacks.createMessageEditor(self.message_controller, False)
         self.log_popup = JPopupMenu()
-        self.log_popup.add(self._ClearLogAction(self))
+        self.clear_action = self._ClearLogAction(self)
+        self.log_popup.add(self.clear_action)
         self.log_area.setComponentPopupMenu(self.log_popup)
+        self.log_scroll.setComponentPopupMenu(self.log_popup)
+        self.matches_popup = JPopupMenu()
+        self.matches_popup.add(self.clear_action)
+        self.matches_table.setComponentPopupMenu(self.matches_popup)
         self.wordlist_browse.addActionListener(self._browse_wordlist)
         self._enable_undo(self.target_field)
         self._enable_undo(self.wordlist_field)
@@ -1482,18 +1488,44 @@ class DirbustPanel(JPanel):
         try:
             doc = self.log_area.getStyledDocument()
             doc.remove(0, doc.getLength())
-        except Exception:
-            self.log_area.setText("")
+    def _clear_all_results(self):
+        def clear():
+            try:
+                self.matches_model.setRowCount(0)
+            except Exception:
+                pass
+            self.match_results = []
+            try:
+                self.matches_table.clearSelection()
+            except Exception:
+                pass
+            try:
+                self.message_controller.set_entry(None)
+            except Exception:
+                pass
+            try:
+                self.request_editor.setMessage(b"", True)
+            except Exception:
+                pass
+            try:
+                self.response_editor.setMessage(b"", False)
+            except Exception:
+                pass
+            try:
+                doc = self.log_area.getStyledDocument()
+                doc.remove(0, doc.getLength())
+            except Exception:
+                pass
+            try:
+                self.log_area.setText("")
+            except Exception:
+                pass
+            try:
+                self.log_area.setCaretPosition(0)
+            except Exception:
+                pass
 
-    def _clear_matches(self):
-        try:
-            self.matches_model.setRowCount(0)
-        except Exception:
-            pass
-        self.match_results = []
-        self.message_controller.set_entry(None)
-        self.request_editor.setMessage(None, True)
-        self.response_editor.setMessage(None, False)
+        SwingUtilities.invokeLater(_SwingRunnable(clear))
 
 
 class BurpExtender(
