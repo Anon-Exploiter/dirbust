@@ -221,6 +221,11 @@ class DirbustConfig(object):
         parser.add_argument("--retry-on-status")
         args = parser.parse_args(shlex.split(cli_string))
         config = cls()
+        # mark optional collections as unset unless provided
+        config.exclude_status = None
+        config.exclude_sizes = None
+        config.include_status = None
+        config.extensions = None
         if args.url:
             config.target_url = normalize_target_url(args.url)
         if args.wordlist:
@@ -1242,6 +1247,12 @@ class DirbustPanel(JPanel):
         if cli_args:
             try:
                 cli_config = DirbustConfig.from_cli(cli_args)
+                if cli_config.exclude_status is not None:
+                    config.exclude_status = (config.exclude_status or set()).union(cli_config.exclude_status)
+                    cli_config.exclude_status = None
+                if cli_config.exclude_sizes is not None:
+                    config.exclude_sizes = (config.exclude_sizes or set()).union(cli_config.exclude_sizes)
+                    cli_config.exclude_sizes = None
                 config.merge(cli_config)
             except Exception as exc:
                 self.log("Failed to parse CLI arguments: %s" % exc)
@@ -1362,7 +1373,8 @@ class DirbustPanel(JPanel):
                 ]
             )
             last = self.matches_model.getRowCount() - 1
-            if last >= 0:
+            current_selection = self.matches_table.getSelectedRow()
+            if last >= 0 and (current_selection is None or current_selection < 0):
                 self.matches_table.setRowSelectionInterval(last, last)
                 self._update_match_detail(last)
 
@@ -1376,9 +1388,13 @@ class DirbustPanel(JPanel):
             self.request_editor.setMessage(None, True)
             self.response_editor.setMessage(None, False)
             return
-        if index >= len(self.match_results):
+        try:
+            model_index = self.matches_table.convertRowIndexToModel(index)
+        except Exception:
+            model_index = index
+        if model_index < 0 or model_index >= len(self.match_results):
             return
-        entry = self.match_results[index]
+        entry = self.match_results[model_index]
         self.message_controller.set_entry(entry)
         self.request_editor.setMessage(entry.get("request_bytes") or b"", True)
         self.response_editor.setMessage(entry.get("response_bytes") or b"", False)
