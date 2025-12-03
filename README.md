@@ -9,7 +9,7 @@ Dirbust is a Burp Suite extension that replicates the feature set of Dirbuster/D
 
 ---
 
-## 🎯 Why?
+## Why?
 
 Most clients keep their Citrix VDIs or Remote Desktops tightly restricted, allowing only a small set of approved tools. BurpSuite usually makes the list, but installing anything else, including Python on Windows or WSL for running dirsearch, is almost always blocked.
 
@@ -35,7 +35,7 @@ I built this to get around that limitation. You simply run dirbust inside BurpSu
 
 ---
 
-## 📦 Installation
+## Installation
 
 1. Clone or download this repository.
 2. Launch Burp Suite (community or professional edition).
@@ -48,7 +48,7 @@ Once loaded, a new `Dirbust` tab will appear in the Burp UI.
 
 ---
 
-## 🛠 Usage
+## Usage
 
 1. **Target Section**  
    - `Target URL`: Base URL (e.g. `https://example.com/`).  
@@ -111,7 +111,7 @@ Paste any combination of these flags exactly as you would in CLI dirsearch/gobus
 
 ---
 
-## 🧪 Testing
+## Testing
 
 - Verified inside Burp Suite Professional with Jython 2.7.3.
 - Works through Burp’s proxy so all traffic is captured in Logger/Proxy/Repeater.
@@ -119,7 +119,7 @@ Paste any combination of these flags exactly as you would in CLI dirsearch/gobus
 
 ---
 
-## 🚨 Notes & Security
+## Notes & Security
 
 - Requests are issued via Burp’s API; ensure you have permission to test the target.
 - Wordlist and output parsing are local only. No network calls beyond what you configure.
@@ -127,13 +127,13 @@ Paste any combination of these flags exactly as you would in CLI dirsearch/gobus
 
 ---
 
-## 📄 License
+## License
 
 Distributed under the MIT License. See `LICENSE` or the repository for details.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Functionality in this project draws directly from Dirsearch, with output formatting inspired by Gobuster. All rights to the original tools remain with their respective authors.
 - AI as this has been heavily vibe coded.
