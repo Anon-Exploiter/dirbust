@@ -338,6 +338,7 @@ class DirbustScanner(object):
         self.config = config
 
     def start(self):
+        """Start a scan using the current config; loads wordlist, spawns workers, and prints the banner."""
         if self.is_running():
             raise RuntimeError("Dirbust scan already running")
         self._set_running(True)
@@ -422,6 +423,7 @@ class DirbustScanner(object):
         self.log(separator)
 
     def stop(self):
+        """Stop an in-progress scan by draining the queue and joining workers."""
         if not self.is_running():
             return
         self._stop_event.set()
@@ -522,6 +524,7 @@ class DirbustScanner(object):
         return None
 
     def _generate_entries(self, wordlist, cache=None):
+        """Yield normalized wordlist entries, expanding %EXT% and appending extensions unless explicitly empty."""
         if self.config.extensions is None:
             extensions = DEFAULT_EXTENSIONS
         else:
@@ -573,6 +576,7 @@ class DirbustScanner(object):
                     time.sleep(self.config.delay)
 
     def _process_item(self, path, depth):
+        """Execute a single request, apply filters/recursion, and log/emit the result."""
         if self.config.rate:
             # crude rate limiting by sleeping
             time.sleep(1.0 / max(1, self.config.rate))
@@ -794,6 +798,7 @@ class DirbustScanner(object):
         raw_response,
         body_text=None,
     ):
+        """Package a result entry and forward it to the UI callback."""
         if not self.result_callback:
             return
         try:
@@ -920,6 +925,7 @@ class DirbustScanner(object):
         return title[:120]
 
     def _build_request(self, path):
+        """Build a raw HTTP request byte array for the given path using the current config."""
         try:
             request_lines = ["%s %s HTTP/1.1" % (self.config.method, path)]
             request_lines.append("Host: %s" % self.host_header)
@@ -964,7 +970,7 @@ class DirbustScanner(object):
 
 
 class DirbustPanel(JPanel):
-    """Swing UI that exposes Dirbust-like configuration."""
+    """Swing UI tab: collects settings, shows logs, and displays responses with request/response viewers."""
 
     def __init__(self, extender, saved_wordlist=""):
         JPanel.__init__(self)
@@ -1348,6 +1354,7 @@ class DirbustPanel(JPanel):
         self._undo_managers.append(manager)
 
     def add_match_result(self, entry):
+        """Append a new result row to the table and optionally auto-select if nothing is selected."""
         def append():
             row_number = len(self.match_results) + 1
             entry["row"] = row_number
@@ -1382,6 +1389,7 @@ class DirbustPanel(JPanel):
         SwingUtilities.invokeLater(_SwingRunnable(append))
 
     def _update_match_detail(self, index=None):
+        """Sync the Burp message viewers with the currently selected table row."""
         if index is None:
             index = self.matches_table.getSelectedRow()
         if index is None or index < 0:
@@ -1401,6 +1409,7 @@ class DirbustPanel(JPanel):
         self.response_editor.setMessage(entry.get("response_bytes") or b"", False)
 
     def _build_matches_model(self):
+        """Create a non-editable table model for Responses rows."""
         class _Model(DefaultTableModel):
             def isCellEditable(self, _row, _column):
                 return False
@@ -1429,6 +1438,7 @@ class DirbustPanel(JPanel):
         )
 
     def _configure_matches_table(self):
+        """Size columns and install the status-based row renderer for the Responses table."""
         self.matches_table.setAutoCreateRowSorter(True)
         column_widths = {
             "#": 40,
@@ -1585,6 +1595,7 @@ class DirbustPanel(JPanel):
         scroll.setMinimumSize(size)
 
     def _clear_all_results(self):
+        """Clear table rows, selection, message viewers, and log output."""
         def clear():
             try:
                 self.matches_model.setRowCount(0)
@@ -1623,6 +1634,7 @@ class DirbustPanel(JPanel):
         SwingUtilities.invokeLater(_SwingRunnable(clear))
 
     def _exclude_selected_length(self):
+        """Append an --exclude-sizes flag for the selected row length to the CLI args box."""
         row = self.matches_table.getSelectedRow()
         if row < 0:
             return
@@ -1649,6 +1661,7 @@ class DirbustPanel(JPanel):
             pass
 
     def _remove_matches_by_length(self, length):
+        """Remove any currently displayed rows with the given length and reset selection/viewers."""
         removed = False
         for idx in range(len(self.match_results) - 1, -1, -1):
             entry = self.match_results[idx]
@@ -1679,7 +1692,7 @@ class DirbustPanel(JPanel):
 class BurpExtender(
     IBurpExtender, ITab, IExtensionStateListener, IContextMenuFactory
 ):
-    """Entry point for Burp Suite."""
+    """Extension entry point that wires Burp callbacks to the panel and scanner."""
 
     def __init__(self):
         self.callbacks = None
