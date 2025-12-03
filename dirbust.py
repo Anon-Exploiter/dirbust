@@ -63,6 +63,7 @@ from javax.swing import SpinnerNumberModel
 from javax.swing import SwingUtilities
 from javax.swing.event import ListSelectionListener
 from javax.swing.table import DefaultTableModel
+from javax.swing.table import DefaultTableCellRenderer
 from javax.swing.text import SimpleAttributeSet
 from javax.swing.text import StyleConstants
 from javax.swing.undo import CannotRedoException
@@ -1443,6 +1444,13 @@ class DirbustPanel(JPanel):
                 column.setPreferredWidth(width)
         except Exception:
             pass
+        try:
+            renderer = self._StatusColorRenderer(self)
+            model = self.matches_table.getColumnModel()
+            for idx in range(model.getColumnCount()):
+                model.getColumn(idx).setCellRenderer(renderer)
+        except Exception:
+            pass
 
     class _MessageEditorController(IMessageEditorController):
         def __init__(self, panel):
@@ -1491,6 +1499,49 @@ class DirbustPanel(JPanel):
 
         def actionPerformed(self, _event):
             self.panel._exclude_selected_length()
+
+    class _StatusColorRenderer(DefaultTableCellRenderer):
+        def __init__(self, panel):
+            DefaultTableCellRenderer.__init__(self)
+            self.panel = panel
+
+        def getTableCellRendererComponent(
+            self, table, value, isSelected, hasFocus, row, column
+        ):
+            comp = DefaultTableCellRenderer.getTableCellRendererComponent(
+                self, table, value, isSelected, hasFocus, row, column
+            )
+            try:
+                model_row = table.convertRowIndexToModel(row)
+                status_val = table.getModel().getValueAt(model_row, 6)
+                color = self.panel._status_color_for_value(status_val)
+                if color is not None:
+                    if not isSelected:
+                        comp.setBackground(color)
+                        comp.setForeground(Color.BLACK)
+                    else:
+                        comp.setBackground(table.getSelectionBackground())
+                        comp.setForeground(table.getSelectionForeground())
+            except Exception:
+                pass
+            return comp
+
+    def _status_color_for_value(self, value):
+        try:
+            status = int(value)
+        except Exception:
+            return None
+        if 100 <= status <= 199:
+            return Color(255, 215, 0)  # yellow
+        if 200 <= status <= 299:
+            return Color(173, 247, 182)  # light green
+        if 300 <= status <= 399:
+            return Color(173, 216, 255)  # light blue
+        if 400 <= status <= 499:
+            return Color(255, 204, 153)  # light orange
+        if 500 <= status <= 599:
+            return Color(255, 170, 170)  # light red
+        return None
 
     def _initialize_component_sizes(self):
         for field in (
