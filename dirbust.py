@@ -63,6 +63,8 @@ from javax.swing import SpinnerNumberModel
 from javax.swing import SwingUtilities
 from javax.swing.event import ListSelectionListener
 from javax.swing.table import DefaultTableModel
+from java.awt.datatransfer import StringSelection
+from java.awt import Toolkit
 from javax.swing.table import DefaultTableCellRenderer
 from javax.swing.text import SimpleAttributeSet
 from javax.swing.text import StyleConstants
@@ -1026,6 +1028,14 @@ class DirbustPanel(JPanel):
         self.exclude_length_action = self._ExcludeLengthAction(self)
         self.matches_popup.add(self.exclude_length_action)
         self.matches_popup.add(self.clear_action)
+        self.matches_popup.addSeparator()
+        self.matches_popup.add(self._SendToRepeaterAction(self))
+        self.matches_popup.add(self._SendToIntruderAction(self))
+        self.matches_popup.add(self._SendToComparerAction(self))
+        self.matches_popup.addSeparator()
+        self.matches_popup.add(self._CopyUrlAction(self))
+        self.matches_popup.add(self._CopyRequestAction(self))
+        self.matches_popup.add(self._CopyResponseAction(self))
         self.matches_table.setComponentPopupMenu(self.matches_popup)
         self.wordlist_browse.addActionListener(self._browse_wordlist)
         self._enable_undo(self.target_field)
@@ -1510,6 +1520,122 @@ class DirbustPanel(JPanel):
         def actionPerformed(self, _event):
             self.panel._exclude_selected_length()
 
+    class _SendToRepeaterAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Send to Repeater")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            entry = self.panel._selected_entry()
+            if not entry:
+                return
+            service = entry.get("service")
+            request = entry.get("request_bytes")
+            if not service or not request:
+                return
+            try:
+                host = service.getHost()
+                port = service.getPort()
+                use_https = service.getProtocol().lower() == "https"
+                self.panel.extender.callbacks.sendToRepeater(host, port, use_https, request, None)
+            except Exception:
+                pass
+
+    class _SendToIntruderAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Send to Intruder")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            entry = self.panel._selected_entry()
+            if not entry:
+                return
+            service = entry.get("service")
+            request = entry.get("request_bytes")
+            if not service or not request:
+                return
+            try:
+                host = service.getHost()
+                port = service.getPort()
+                use_https = service.getProtocol().lower() == "https"
+                self.panel.extender.callbacks.sendToIntruder(host, port, use_https, request)
+            except Exception:
+                pass
+
+    class _SendToComparerAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Send to Comparer")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            entry = self.panel._selected_entry()
+            if not entry:
+                return
+            request = entry.get("request_bytes")
+            response = entry.get("response_bytes")
+            try:
+                if request:
+                    self.panel.extender.callbacks.sendToComparer(request)
+                if response:
+                    self.panel.extender.callbacks.sendToComparer(response)
+            except Exception:
+                pass
+
+
+    class _CopyUrlAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Copy URL")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            entry = self.panel._selected_entry()
+            if not entry:
+                return
+            url = entry.get("url")
+            if not url:
+                return
+            try:
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(StringSelection(url), None)
+            except Exception:
+                pass
+
+    class _CopyRequestAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Copy request")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            entry = self.panel._selected_entry()
+            if not entry:
+                return
+            req = entry.get("request_bytes")
+            if not req:
+                return
+            try:
+                text = self.panel.extender.helpers.bytesToString(req)
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(StringSelection(text), None)
+            except Exception:
+                pass
+
+    class _CopyResponseAction(AbstractAction):
+        def __init__(self, panel):
+            AbstractAction.__init__(self, "Copy response")
+            self.panel = panel
+
+        def actionPerformed(self, _event):
+            entry = self.panel._selected_entry()
+            if not entry:
+                return
+            resp = entry.get("response_bytes")
+            if not resp:
+                return
+            try:
+                text = self.panel.extender.helpers.bytesToString(resp)
+                Toolkit.getDefaultToolkit().getSystemClipboard().setContents(StringSelection(text), None)
+            except Exception:
+                pass
+
+
     class _StatusColorRenderer(DefaultTableCellRenderer):
         def __init__(self, panel):
             DefaultTableCellRenderer.__init__(self)
@@ -1552,6 +1678,7 @@ class DirbustPanel(JPanel):
         if 500 <= status <= 599:
             return Color(255, 170, 170)  # light red
         return None
+
 
     def _initialize_component_sizes(self):
         for field in (
@@ -1659,6 +1786,19 @@ class DirbustPanel(JPanel):
             self.log("Will exclude length %s on next scan" % length)
         except Exception:
             pass
+
+    def _selected_entry(self):
+        """Return the currently selected result entry or None."""
+        row = self.matches_table.getSelectedRow()
+        if row < 0:
+            return None
+        try:
+            model_row = self.matches_table.convertRowIndexToModel(row)
+        except Exception:
+            model_row = row
+        if model_row < 0 or model_row >= len(self.match_results):
+            return None
+        return self.match_results[model_row]
 
     def _remove_matches_by_length(self, length):
         """Remove any currently displayed rows with the given length and reset selection/viewers."""
