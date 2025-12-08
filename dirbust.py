@@ -188,6 +188,7 @@ class DirbustConfig(object):
         self.user_agent = DEFAULT_USER_AGENT
         self.data = ""
         self.follow_redirects = False
+        self.absolute_urls = False
         self.timeout = 5.0
         self.retries = 1
         self.delay = 0.0
@@ -215,6 +216,7 @@ class DirbustConfig(object):
         parser.add_argument("--user-agent")
         parser.add_argument("--data")
         parser.add_argument("--follow-redirects", action="store_true")
+        parser.add_argument("--absolute-url", action="store_true", dest="absolute_urls")
         parser.add_argument("--timeout", type=float)
         parser.add_argument("--retries", type=int)
         parser.add_argument("--delay", type=float)
@@ -265,6 +267,8 @@ class DirbustConfig(object):
             config.data = args.data
         if args.follow_redirects:
             config.follow_redirects = True
+        if getattr(args, "absolute_urls", False):
+            config.absolute_urls = True
         if args.timeout:
             config.timeout = max(1.0, args.timeout)
         if args.retries:
@@ -929,7 +933,10 @@ class DirbustScanner(object):
     def _build_request(self, path):
         """Build a raw HTTP request byte array for the given path using the current config."""
         try:
-            request_lines = ["%s %s HTTP/1.1" % (self.config.method, path)]
+            request_target = path
+            if self.config.absolute_urls:
+                request_target = self._full_url(path)
+            request_lines = ["%s %s HTTP/1.1" % (self.config.method, request_target)]
             request_lines.append("Host: %s" % self.host_header)
             headers = dict(self.config.headers)
             if "User-Agent" not in headers:
@@ -996,6 +1003,7 @@ class DirbustPanel(JPanel):
         self.method_combo = JComboBox(["GET", "HEAD", "POST"])
         self.recursive_box = JCheckBox("Recursive", False)
         self.follow_redirects_box = JCheckBox("Follow redirects", False)
+        self.absolute_urls_box = JCheckBox("Absolute URLs", False)
         self.exclude_status_field = JTextField("403,404", 24)
         self.timeout_spinner = JSpinner(SpinnerNumberModel(5.0, 1.0, 300.0, 1.0))
         self.thread_spinner = JSpinner(SpinnerNumberModel(25, 1, 128, 1))
@@ -1107,6 +1115,7 @@ class DirbustPanel(JPanel):
         options_panel = JPanel(FlowLayout(FlowLayout.LEFT))
         options_panel.add(self.recursive_box)
         options_panel.add(self.follow_redirects_box)
+        options_panel.add(self.absolute_urls_box)
         add_row(right_form, right_row, "Options", options_panel)
 
         button_panel = JPanel()
@@ -1260,6 +1269,7 @@ class DirbustPanel(JPanel):
         config.data = self.data_area.getText()
         config.recursive = self.recursive_box.isSelected()
         config.follow_redirects = self.follow_redirects_box.isSelected()
+        config.absolute_urls = self.absolute_urls_box.isSelected()
         cli_args = self.cli_args_area.getText().strip()
         if cli_args:
             try:

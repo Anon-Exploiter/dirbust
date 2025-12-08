@@ -27,6 +27,7 @@ I built this to get around that limitation. You simply run dirbust inside BurpSu
 | **Filters & exclusions** | Include/exclude status codes, sizes, text matches, and recursion status handling. |
 | **Rate / delay** | Per-request delay, rate limit, retry logic, and follow-redirect toggles. |
 | **Dirsearch templating** | CLI-style override box that accepts traditional Dirsearch arguments and merges them with UI selections. |
+| **Absolute request lines** | Optional toggle to send full absolute URLs in the request line for legacy servers/proxies that require it. |
 | **Wordlist persistence** | Automatically remembers the last wordlist path between Burp sessions. |
 | **Undo support** | All text areas and fields support Ctrl+Z / Ctrl+Y undo/redo. |
 | **Clear results** | Right-click the output to clear the current run. |
@@ -58,7 +59,8 @@ Once loaded, a new `Dirbust` tab will appear in the Burp UI.
 2. **Request Options**  
    - HTTP method (GET/POST/HEAD).  
    - Custom headers, cookies, POST data, CLI arguments (Dirsearch-compatible).  
-   - User-Agent override, recursion toggle, follow-redirect toggle.
+   - User-Agent override, recursion toggle, follow-redirect toggle.  
+   - Absolute URLs toggle to send full `scheme://host/path` in the request line for legacy servers that require it.
 
 3. **Performance & Filters**  
    - Threads, timeout, retries, delay, recursion depth.  
@@ -94,6 +96,7 @@ On top of the given options, the “CLI arguments“ textarea accepts Dirsearch-
 --user-agent                Override User-Agent
 --data                      Request body (for POST/PUT)
 --follow-redirects          Follow redirect responses when scanning
+--absolute-url              Send absolute URL in the request line (for legacy servers/proxies)
 --timeout                   Request timeout (seconds)
 --retries                   Retry count per request
 --delay                     Delay between requests (seconds)
@@ -103,7 +106,7 @@ On top of the given options, the “CLI arguments“ textarea accepts Dirsearch-
 --retry-on-status           Status codes that trigger retries
 ```
 
-Paste any combination of these flags exactly as you would in CLI dirsearch/gobuster and they will override or argument the current UI settings. Sample usage:
+Paste any combination of these flags exactly as you would in CLI dirsearch/gobuster and they will override or augment the current UI settings. Sample usage:
 
 ```bash
 --data 'a=bcd' --exclude-text 'oranges'
