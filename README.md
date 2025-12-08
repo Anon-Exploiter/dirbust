@@ -29,6 +29,7 @@ I built this to get around that limitation. You simply run dirbust inside BurpSu
 | **Dirsearch templating** | CLI-style override box that accepts traditional Dirsearch arguments and merges them with UI selections. |
 | **Absolute request lines** | Optional toggle to send full absolute URLs in the request line for legacy servers/proxies that require it. |
 | **Wordlist persistence** | Automatically remembers the last wordlist path between Burp sessions. |
+| **Burp context menu** | Right-click any Burp request and “Send to Dirbust” to auto-fill target, cookies, headers, UA, and body without manual copy/paste. |
 | **Undo support** | All text areas and fields support Ctrl+Z / Ctrl+Y undo/redo. |
 | **Clear results** | Right-click the output to clear the current run. |
 | **Split UI** | Two-column form layout with adjustable splitter for results. |
@@ -61,6 +62,9 @@ Once loaded, a new `Dirbust` tab will appear in the Burp UI.
    - Custom headers, cookies, POST data, CLI arguments (Dirsearch-compatible).  
    - User-Agent override, recursion toggle, follow-redirect toggle.  
    - Absolute URLs toggle to send full `scheme://host/path` in the request line for legacy servers that require it.
+
+3. **Burp shortcut**  
+   - Right-click any request in Proxy/Logger/Repeater and choose “Send to Dirbust” to populate target URL, method, headers (minus Host), cookies, User-Agent, and body automatically.
 
 3. **Performance & Filters**  
    - Threads, timeout, retries, delay, recursion depth.  
