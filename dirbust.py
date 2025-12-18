@@ -442,6 +442,12 @@ class DirbustScanner(object):
         for thread in self._threads:
             thread.join(0.2)
         self._threads = []
+        try:
+            if self._completion_thread is not None:
+                self._completion_thread.join(0.5)
+        except Exception:
+            pass
+        self._completion_thread = None
         self._set_running(False)
         self.log_scan_footer()
 
@@ -988,6 +994,10 @@ class DirbustPanel(JPanel):
         self.saved_wordlist = saved_wordlist or ""
         self.setLayout(BorderLayout(5, 5))
         self._undo_managers = []
+        # Track whether the user has pinned a specific result so we do not auto-jump when new rows arrive.
+        self._auto_follow_results = True
+        self._pinned_row_id = None
+        self._suppress_selection_tracking = False
         self._init_components()
 
     def _init_components(self):
@@ -1402,9 +1412,10 @@ class DirbustPanel(JPanel):
             )
             last = self.matches_model.getRowCount() - 1
             current_selection = self.matches_table.getSelectedRow()
-            if last >= 0 and (current_selection is None or current_selection < 0):
-                self.matches_table.setRowSelectionInterval(last, last)
-                self._update_match_detail(last)
+            if not self._auto_follow_results and self._pinned_row_id is not None:
+                self._restore_pinned_selection()
+            elif last >= 0 and (current_selection is None or current_selection < 0) and self._auto_follow_results:
+                self._select_row(last)
 
         SwingUtilities.invokeLater(_SwingRunnable(append))
 
@@ -1427,6 +1438,47 @@ class DirbustPanel(JPanel):
         self.message_controller.set_entry(entry)
         self.request_editor.setMessage(entry.get("request_bytes") or b"", True)
         self.response_editor.setMessage(entry.get("response_bytes") or b"", False)
+
+    def _select_row(self, view_index):
+        """Select a row without toggling the auto-follow flag."""
+        try:
+            self._suppress_selection_tracking = True
+            self.matches_table.setRowSelectionInterval(view_index, view_index)
+            self._update_match_detail(view_index)
+        finally:
+            self._suppress_selection_tracking = False
+
+    def _restore_pinned_selection(self):
+        """Re-apply the user's pinned selection if it exists."""
+        if self._pinned_row_id is None:
+            return
+        try:
+            for model_index, entry in enumerate(self.match_results):
+                if entry.get("row") != self._pinned_row_id:
+                    continue
+                try:
+                    view_index = self.matches_table.convertRowIndexToView(model_index)
+                except Exception:
+                    view_index = model_index
+                if view_index >= 0:
+                    self._select_row(view_index)
+                return
+        except Exception:
+            pass
+
+    def _handle_selection_change(self):
+        """Track when the user pins a row so new results do not steal focus."""
+        if self._suppress_selection_tracking:
+            self._update_match_detail()
+            return
+        entry = self._selected_entry()
+        if entry:
+            self._auto_follow_results = False
+            self._pinned_row_id = entry.get("row")
+        else:
+            self._auto_follow_results = True
+            self._pinned_row_id = None
+        self._update_match_detail()
 
     def _build_matches_model(self):
         """Create a non-editable table model for Responses rows."""
@@ -1520,7 +1572,7 @@ class DirbustPanel(JPanel):
         def valueChanged(self, event):
             if event.getValueIsAdjusting():
                 return
-            self.panel._update_match_detail()
+            self.panel._handle_selection_change()
 
     class _ExcludeLengthAction(AbstractAction):
         def __init__(self, panel):
@@ -1739,6 +1791,8 @@ class DirbustPanel(JPanel):
             except Exception:
                 pass
             self.match_results = []
+            self._pinned_row_id = None
+            self._auto_follow_results = True
             try:
                 self.matches_table.clearSelection()
             except Exception:
@@ -1827,6 +1881,15 @@ class DirbustPanel(JPanel):
                 pass
             removed = True
         if removed:
+            if self._pinned_row_id is not None:
+                exists = False
+                for entry in self.match_results:
+                    if entry.get("row") == self._pinned_row_id:
+                        exists = True
+                        break
+                if not exists:
+                    self._pinned_row_id = None
+                    self._auto_follow_results = True
             try:
                 self.matches_table.clearSelection()
             except Exception:
