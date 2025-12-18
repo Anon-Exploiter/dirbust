@@ -138,7 +138,7 @@ Paste any combination of these flags exactly as you would in CLI dirsearch/gobus
 
 Distributed under the MIT License. See `LICENSE` or the repository for details.
 
---
+---
 
 ## Future Todos
 
