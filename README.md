@@ -6,14 +6,13 @@ Dirbust is a Burp Suite extension that replicates the feature set of Dirbuster/D
 
 <img width="1565" height="1015" alt="image" src="https://github.com/Anon-Exploiter/dirbust/blob/main/images/dirbust_01.gif?raw=true" />
 
-
 ---
 
 ## Why?
 
 Most clients keep their Citrix VDIs or Remote Desktops tightly restricted, allowing only a small set of approved tools. BurpSuite usually makes the list, but installing anything else, including Python on Windows or WSL for running dirsearch, is almost always blocked.
 
-I built this to get around that limitation. You simply run dirbust inside BurpSuite itself, target any URL or endpoint, choose your custom or dirsearch-style wordlists, set the extensions, and start the scan.
+Built this to get around that limitation. You simply run dirbust inside BurpSuite itself, target any URL or endpoint, choose your custom or dirsearch-style wordlists, set the extensions, and start the scan.
 
 ---
 
@@ -39,7 +38,7 @@ I built this to get around that limitation. You simply run dirbust inside BurpSu
 
 ## Installation
 
-1. Clone or download this repository.
+1. Clone this repository or download `dirbust.py` directly.
 2. Launch Burp Suite (community or professional edition).
 3. Navigate to `Extender` → `Extensions`.
 4. Click `Add`, select `Extension Type: Python`, and choose `dirbust.py`.
@@ -64,7 +63,7 @@ Once loaded, a new `Dirbust` tab will appear in the Burp UI.
    - Absolute URLs toggle to send full `scheme://host/path` in the request line for legacy servers that require it.
 
 3. **Burp shortcut**  
-   - Right-click any request in Proxy/Logger/Repeater and choose “Send to Dirbust” to populate target URL, method, headers (minus Host), cookies, User-Agent, and body automatically.
+   - Right-click any request in Proxy/Logger/Repeater and choose “Send to Dirbust” to populate target URL, method, headers, cookies, User-Agent, and body automatically.
 
 3. **Performance & Filters**  
    - Threads, timeout, retries, delay, recursion depth.  
@@ -76,10 +75,11 @@ Once loaded, a new `Dirbust` tab will appear in the Burp UI.
 
 5. **UI**  
    - Results area supports dynamic resizing via the splitter between the form and output sections.
+   - Additionally, results are divided in two tabs, "Output" and "Responses
 
 ---
 
-## ⚙️ CLI Argument Merge
+## ⚙️ CLI Arguments
 
 On top of the given options, the “CLI arguments“ textarea accepts Dirsearch-style flags and merges them with the UI selections. Supported flags:
 
@@ -122,7 +122,7 @@ Paste any combination of these flags exactly as you would in CLI dirsearch/gobus
 
 - Verified inside Burp Suite Professional with Jython 2.7.3.
 - Works through Burp’s proxy so all traffic is captured in Logger/Proxy/Repeater.
-- Compatible with HTTPS targets and custom ports.
+- Compatible with HTTPS and custom ports.
 
 ---
 
@@ -137,6 +137,14 @@ Paste any combination of these flags exactly as you would in CLI dirsearch/gobus
 ## License
 
 Distributed under the MIT License. See `LICENSE` or the repository for details.
+
+--
+
+## Future Todos
+
+- [ ] Implement scans import/export functionality with filter for some/all requests
+- [ ] Clarify and add screenshots for each feature & argument
+
 
 ---
 
