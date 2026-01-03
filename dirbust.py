@@ -74,9 +74,9 @@ from javax.swing.undo import UndoManager
 
 try:
     from urllib import quote
-    from urlparse import urlparse
+    from urlparse import urlparse, urljoin
 except ImportError:
-    from urllib.parse import quote, urlparse
+    from urllib.parse import quote, urlparse, urljoin
 
 
 class _SwingRunnable(Runnable):
@@ -90,6 +90,7 @@ class _SwingRunnable(Runnable):
 DEFAULT_EXTENSIONS = ["php", "asp", "aspx", "jsp", "html", "js", "txt"]
 DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"
 TAB_HIGHLIGHT_COLOR = Color(242, 119, 76)
+EXTENSION_VERSION = "0.1"
 
 
 def safe_int_list(value):
@@ -402,7 +403,7 @@ class DirbustScanner(object):
             ]
             header_lines = [
                 separator,
-                "Dirbust v0.0.3 by @syed__umar",
+                "Dirbust v%s by @syed__umar" % EXTENSION_VERSION,
                 separator,
             ]
             header_lines.extend(["{label} {value}".format(label=label, value=value) for label, value in fields])
@@ -626,7 +627,10 @@ class DirbustScanner(object):
             return
         if self._should_skip(status, length, body_text):
             return
-        message = self._format_result(status, length, path)
+        redirect_location = None
+        if 300 <= status <= 399 and status != 304:
+            redirect_location = self._extract_redirect_location(analyzed.getHeaders())
+        message = self._format_result(status, length, path, redirect_location)
         self.log(message, self._status_color(status))
         self._emit_result(status, length, path, request_bytes, raw_response, body_text)
         if self.config.recursive and depth < self.config.max_depth:
@@ -695,6 +699,25 @@ class DirbustScanner(object):
                 return header.split(":", 1)[1].strip()
         return None
 
+    @staticmethod
+    def _extract_redirect_location(headers):
+        if not headers:
+            return None
+        refresh_value = None
+        for header in headers:
+            lower = header.lower()
+            if lower.startswith("location:"):
+                return header.split(":", 1)[1].strip()
+            if lower.startswith("content-location:"):
+                return header.split(":", 1)[1].strip()
+            if lower.startswith("refresh:"):
+                refresh_value = header.split(":", 1)[1].strip()
+        if refresh_value:
+            match = re.search(r"url\s*=\s*([^;]+)", refresh_value, re.I)
+            if match:
+                return match.group(1).strip().strip('"').strip("'")
+        return None
+
     def _parse_https_redirect(self, headers):
         location = self._extract_location(headers)
         if not location:
@@ -753,17 +776,40 @@ class DirbustScanner(object):
         self._queue.put((path, depth))
         return True
 
-    def _format_result(self, status, length, path):
+    def _format_result(self, status, length, path, redirect_location=None):
         timestamp = time.strftime("[%H:%M:%S]")
         status_str = ("%d" % status).rjust(3)
         length_str = self._human_size(length).rjust(7)
         full_url = self._full_url(path)
+        redirect_target = self._format_redirect_target(path, redirect_location)
+        if redirect_target:
+            return "%s %s - %s - %s -> %s" % (
+                timestamp,
+                status_str,
+                length_str,
+                full_url,
+                redirect_target,
+            )
         return "%s %s - %s - %s" % (
             timestamp,
             status_str,
             length_str,
             full_url,
         )
+
+    def _format_redirect_target(self, path, location):
+        if not location:
+            return ""
+        try:
+            location = location.strip()
+        except Exception:
+            return ""
+        if not location:
+            return ""
+        try:
+            return urljoin(self._full_url(path), location)
+        except Exception:
+            return location
 
     def _full_url(self, path):
         if path.startswith("http://") or path.startswith("https://"):
@@ -1184,10 +1230,15 @@ class DirbustPanel(JPanel):
         )
         matches_splitter.setResizeWeight(0.35)
 
-        results_tabs = JTabbedPane()
-        results_tabs.addTab("Output", self.log_scroll)
-        results_tabs.addTab("Responses", matches_splitter)
-        log_panel.add(results_tabs, BorderLayout.CENTER)
+        results_splitter = JSplitPane(
+            JSplitPane.HORIZONTAL_SPLIT,
+            self.log_scroll,
+            matches_splitter,
+        )
+        results_splitter.setResizeWeight(0.5)
+        results_splitter.setDividerLocation(0.5)
+        results_splitter.setOneTouchExpandable(True)
+        log_panel.add(results_splitter, BorderLayout.CENTER)
 
         splitter = JSplitPane(JSplitPane.VERTICAL_SPLIT, upper_panel, log_panel)
         splitter.setResizeWeight(0.5)
