@@ -16,7 +16,7 @@ Built this to get around that limitation. You simply run dirbust inside BurpSuit
 
 ---
 
-## ✨ Features
+## Features
 
 | Feature | Details |
 |---|---|
