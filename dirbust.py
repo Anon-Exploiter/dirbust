@@ -323,9 +323,6 @@ class DirbustScanner(object):
         self.result_callback = result_callback
         self.finished_callback = finished_callback
         self.progress_callback = progress_callback
-        self._threads = []
-        self._queue = Queue.Queue()
-        self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._visited_lock = threading.Lock()
         self._state_lock = threading.Lock()
@@ -335,8 +332,14 @@ class DirbustScanner(object):
         self._visited = set()
         self.config = None
         self._wordlist_entries = []
+        self._threads = []
         self._completion_thread = None
         self._producer_thread = None
+        # Per-scan mutable state — kept on the instance only for stop() and
+        # log_scan_footer(); workers receive these as closure args so that
+        # restarting a scan never affects threads from a previous scan.
+        self._stop_event = threading.Event()
+        self._queue = Queue.Queue()
         self._loading_done = threading.Event()
         self._total_requests = 0
         self._done_requests = 0
@@ -376,31 +379,48 @@ class DirbustScanner(object):
                 raise ValueError("Invalid target URL")
             self._setup_target(parsed)
             upgrade_note = self._probe_https_upgrade()
-            self._stop_event.clear()
-            self._loading_done.clear()
+
+            # Create fresh per-scan objects so threads from any previous scan
+            # hold only references to the OLD event/queue and can never
+            # interfere with the new scan even if they outlive their join().
+            stop_event = threading.Event()
+            work_queue = Queue.Queue(maxsize=1000)
+            loading_done = threading.Event()
+
+            # Expose on self so stop() and log_scan_footer() can reach them.
+            self._stop_event = stop_event
+            self._queue = work_queue
+            self._loading_done = loading_done
+
             self._threads = []
-            self._queue = Queue.Queue(maxsize=1000)
             self._visited = set()
             with self._progress_lock:
                 self._total_requests = 0
                 self._done_requests = 0
             self._wordlist_entries = entry_cache if entry_cache is not None else []
+
             for _ in range(self.config.threads):
-                thread = threading.Thread(target=self._worker, name="Dirbust-worker")
+                thread = threading.Thread(
+                    target=self._make_worker(stop_event, work_queue),
+                    name="Dirbust-worker",
+                )
                 thread.daemon = True
                 thread.start()
                 self._threads.append(thread)
+
             self._producer_thread = threading.Thread(
-                target=self._feed_queue,
-                args=(wordlist_iter, entry_cache),
+                target=self._make_producer(wordlist_iter, entry_cache, stop_event, work_queue, loading_done),
                 name="Dirbust-producer",
             )
             self._producer_thread.daemon = True
             self._producer_thread.start()
-            # self.log(
-            #     "Scan started with %d entries and %d threads"
-            #     % (self._queue.qsize(), self.config.threads)
-            # )
+
+            self._completion_thread = threading.Thread(
+                target=self._make_monitor(stop_event, work_queue, loading_done),
+                name="Dirbust-monitor",
+            )
+            self._completion_thread.daemon = True
+            self._completion_thread.start()
 
             separator = "=" * 63
             fields = [
@@ -428,13 +448,76 @@ class DirbustScanner(object):
                 self.log(line)
             if upgrade_note:
                 self.log(upgrade_note)
-
-            self._completion_thread = threading.Thread(target=self._wait_for_completion, name="Dirbust-monitor")
-            self._completion_thread.daemon = True
-            self._completion_thread.start()
         except Exception:
             self._set_running(False)
             raise
+
+    # ------------------------------------------------------------------
+    # Per-scan thread factories — each returns a plain callable that
+    # captures the scan-specific objects (stop_event, work_queue, …) so
+    # threads from a previous scan are completely blind to any new scan.
+    # ------------------------------------------------------------------
+
+    def _make_worker(self, stop_event, work_queue):
+        def _run():
+            while not stop_event.is_set():
+                try:
+                    item, depth = work_queue.get(timeout=0.1)
+                except Queue.Empty:
+                    continue
+                try:
+                    self._process_item(item, depth, stop_event, work_queue)
+                except Exception:
+                    self._handle_thread_exception("Dirbust worker")
+                finally:
+                    work_queue.task_done()
+                    with self._progress_lock:
+                        self._done_requests += 1
+                    self._notify_progress()
+                    if self.config.delay:
+                        time.sleep(self.config.delay)
+        return _run
+
+    def _make_producer(self, wordlist_iter, entry_cache, stop_event, work_queue, loading_done):
+        def _run():
+            try:
+                all_entries = list(self._generate_entries(wordlist_iter, entry_cache))
+                if not all_entries:
+                    if not stop_event.is_set():
+                        self.log("No entries loaded from wordlist — check the path and file format")
+                    return
+                with self._progress_lock:
+                    self._total_requests = len(all_entries)
+                self._notify_progress()
+                for entry in all_entries:
+                    if stop_event.is_set():
+                        break
+                    path = self._build_path(entry)
+                    while not stop_event.is_set():
+                        try:
+                            work_queue.put((path, 0), timeout=0.2)
+                            break
+                        except Queue.Full:
+                            continue
+            except Exception:
+                self._handle_thread_exception("Dirbust producer")
+            finally:
+                loading_done.set()
+        return _run
+
+    def _make_monitor(self, stop_event, work_queue, loading_done):
+        def _run():
+            try:
+                loading_done.wait()
+                work_queue.join()
+                if stop_event.is_set():
+                    return
+                self.log_scan_footer()
+                self._mark_finished()
+            except Exception:
+                self._handle_thread_exception("Dirbust monitor")
+                self._mark_finished()
+        return _run
 
     def log_scan_footer(self):
         separator = "=" * 63
@@ -476,46 +559,6 @@ class DirbustScanner(object):
         self._producer_thread = None
         self._set_running(False)
         self.log_scan_footer()
-
-    def _feed_queue(self, wordlist_iter, entry_cache):
-        """Producer: collect all expanded entries, set a fixed total, then stream into the bounded queue."""
-        try:
-            all_entries = list(self._generate_entries(wordlist_iter, entry_cache))
-            if not all_entries:
-                if not self._stop_event.is_set():
-                    self.log("No entries loaded from wordlist — check the path and file format")
-                return
-            with self._progress_lock:
-                self._total_requests = len(all_entries)
-            self._notify_progress()
-            for entry in all_entries:
-                if self._stop_event.is_set():
-                    break
-                path = self._build_path(entry)
-                while not self._stop_event.is_set():
-                    try:
-                        self._queue.put((path, 0), timeout=0.2)
-                        break
-                    except Queue.Full:
-                        continue
-        except Exception:
-            self._handle_thread_exception("Dirbust producer")
-        finally:
-            self._loading_done.set()
-
-    def _wait_for_completion(self):
-        try:
-            # Block until the producer has finished feeding the queue, then wait
-            # for all queued tasks (including any added by recursion/redirects).
-            self._loading_done.wait()
-            self._queue.join()
-            if self._stop_event.is_set():
-                return
-            self.log_scan_footer()
-            self._mark_finished()
-        except Exception:
-            self._handle_thread_exception("Dirbust monitor")
-            self._mark_finished()
 
     def _load_wordlist(self, path):
         path = os.path.expanduser(path)
@@ -645,10 +688,11 @@ class DirbustScanner(object):
                 if self.config.delay:
                     time.sleep(self.config.delay)
 
-    def _process_item(self, path, depth):
+    def _process_item(self, path, depth, stop_event, work_queue):
         """Execute a single request, apply filters/recursion, and log/emit the result."""
+        if stop_event.is_set():
+            return
         if self.config.rate:
-            # crude rate limiting by sleeping
             time.sleep(1.0 / max(1, self.config.rate))
         if path in self._visited:
             return
@@ -694,27 +738,24 @@ class DirbustScanner(object):
         self._emit_result(status, length, path, request_bytes, raw_response, body_text)
         if self.config.recursive and depth < self.config.max_depth:
             if status in self.config.recursive_status or path.endswith("/"):
-                self._enqueue_recursion(path, depth + 1)
+                self._enqueue_recursion(path, depth + 1, work_queue)
         if self.config.follow_redirects and status in (301, 302, 303, 307, 308):
             location = self._extract_location(analyzed.getHeaders())
             redirected = self._resolve_location(location)
             if redirected:
-                self._queue.put((redirected, depth))
+                work_queue.put((redirected, depth))
 
-    def _enqueue_recursion(self, directory_path, depth):
+    def _enqueue_recursion(self, directory_path, depth, work_queue):
         base = directory_path
         if not base.endswith("/"):
             base += "/"
-        entries = list(self._wordlist_entries)  # snapshot; producer may still be appending
-        added = 0
+        entries = list(self._wordlist_entries)
         for entry in entries:
             if entry.startswith("/"):
                 relative = entry[1:]
             else:
                 relative = entry
-            new_path = base + relative
-            self._queue.put((new_path, depth))
-            added += 1
+            work_queue.put((base + relative, depth))
 
     def _should_skip(self, status, length, body_text):
         if self.config.include_status and status not in self.config.include_status:
