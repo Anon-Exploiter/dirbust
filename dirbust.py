@@ -1217,17 +1217,19 @@ class DirbustScanner(object):
 class DirbustPanel(JPanel):
     """Swing UI tab: collects settings, shows logs, and displays responses with request/response viewers."""
 
-    def __init__(self, extender, saved_wordlist=""):
+    def __init__(self, extender, saved_wordlist="", saved_output_dir=""):
         JPanel.__init__(self)
         self.extender = extender
         self.callbacks = extender.callbacks
         self.saved_wordlist = saved_wordlist or ""
+        self.saved_output_dir = saved_output_dir or ""
         self.setLayout(BorderLayout(5, 5))
         self._undo_managers = []
-        # Track whether the user has pinned a specific result so we do not auto-jump when new rows arrive.
         self._auto_follow_results = True
         self._pinned_row_id = None
         self._suppress_selection_tracking = False
+        self._log_file = None
+        self._log_file_lock = threading.Lock()
         self._init_components()
 
     def _init_components(self):
@@ -1239,6 +1241,8 @@ class DirbustPanel(JPanel):
         self.target_field = JTextField("", 24)
         self.wordlist_field = JTextField(self.saved_wordlist, 24)
         self.wordlist_browse = JButton("Browse...")
+        self.output_dir_field = JTextField(self.saved_output_dir, 24)
+        self.output_dir_browse = JButton("Browse...")
         self.extensions_field = JTextField(",".join(DEFAULT_EXTENSIONS), 24)
         self.method_combo = JComboBox(["GET", "HEAD", "POST"])
         self.recursive_box = JCheckBox("Recursive", False)
@@ -1286,8 +1290,10 @@ class DirbustPanel(JPanel):
         self.matches_popup.add(self._CopyResponseAction(self))
         self.matches_table.setComponentPopupMenu(self.matches_popup)
         self.wordlist_browse.addActionListener(self._browse_wordlist)
+        self.output_dir_browse.addActionListener(self._browse_output_dir)
         self._enable_undo(self.target_field)
         self._enable_undo(self.wordlist_field)
+        self._enable_undo(self.output_dir_field)
         self._enable_undo(self.extensions_field)
         self._enable_undo(self.exclude_status_field)
         self._enable_undo(self.cookies_field)
@@ -1333,8 +1339,24 @@ class DirbustPanel(JPanel):
         wl_constraints.fill = GridBagConstraints.NONE
         wordlist_panel.add(self.wordlist_browse, wl_constraints)
 
+        output_dir_panel = JPanel(GridBagLayout())
+        od_constraints = GridBagConstraints()
+        od_constraints.insets = Insets(0, 0, 0, 4)
+        od_constraints.gridx = 0
+        od_constraints.gridy = 0
+        od_constraints.weightx = 1.0
+        od_constraints.fill = GridBagConstraints.HORIZONTAL
+        output_dir_panel.add(self.output_dir_field, od_constraints)
+        od_constraints = GridBagConstraints()
+        od_constraints.gridx = 1
+        od_constraints.gridy = 0
+        od_constraints.weightx = 0.0
+        od_constraints.fill = GridBagConstraints.NONE
+        output_dir_panel.add(self.output_dir_browse, od_constraints)
+
         add_row(left_form, left_row, "Target URL", self.target_field, True)
         add_row(left_form, left_row, "Wordlist path", wordlist_panel, True)
+        add_row(left_form, left_row, "Output folder", output_dir_panel, True)
         add_row(left_form, left_row, "Extensions", self.extensions_field, True)
         add_row(left_form, left_row, "HTTP method", self.method_combo)
         add_row(left_form, left_row, "Exclude status", self.exclude_status_field)
@@ -1485,6 +1507,14 @@ class DirbustPanel(JPanel):
         SwingUtilities.invokeLater(_SwingRunnable(do_highlight))
 
     def log(self, message, color=None):
+        with self._log_file_lock:
+            f = self._log_file
+        if f is not None:
+            try:
+                f.write(message + "\n")
+            except Exception:
+                pass
+
         def append():
             try:
                 doc = self.log_area.getStyledDocument()
@@ -1543,6 +1573,68 @@ class DirbustPanel(JPanel):
                 self.log("Failed to parse CLI arguments: %s" % exc)
         return config
 
+    @staticmethod
+    def _build_log_filename(config):
+        """Return a filename like hhmmss-ddmmyyyy_hostname[_endpoint].txt"""
+        ts = time.strftime("%H%M%S-%d%m%Y")
+        try:
+            from urlparse import urlparse as _urlparse
+        except ImportError:
+            from urllib.parse import urlparse as _urlparse
+        try:
+            parsed = _urlparse(config.target_url)
+            hostname = re.sub(r'[^a-zA-Z0-9]+', '-', parsed.hostname or "unknown").strip('-')
+            port = parsed.port
+            if port and port not in (80, 443):
+                hostname = "%s-%d" % (hostname, port)
+            path = (parsed.path or "").strip("/")
+            safe_path = re.sub(r'[^a-zA-Z0-9._-]+', '-', path).strip('-')
+            if safe_path and len(safe_path) <= 30:
+                return "%s_%s_%s.txt" % (ts, hostname, safe_path)
+            return "%s_%s.txt" % (ts, hostname)
+        except Exception:
+            return "%s_scan.txt" % ts
+
+    def _determine_log_dir(self, config):
+        """Return (log_dir, created) where log_dir is the directory to write into."""
+        custom = self.output_dir_field.getText().strip()
+        if custom:
+            log_dir = custom
+        else:
+            try:
+                wordlist_parent = os.path.dirname(os.path.abspath(config.wordlist_path))
+            except Exception:
+                wordlist_parent = os.path.expanduser("~")
+            log_dir = os.path.join(wordlist_parent, "output")
+        if not os.path.isdir(log_dir):
+            os.makedirs(log_dir)
+        return log_dir
+
+    def _open_log_file(self, config):
+        """Open a new log file for the current scan and store it in self._log_file."""
+        try:
+            log_dir = self._determine_log_dir(config)
+            filename = self._build_log_filename(config)
+            filepath = os.path.join(log_dir, filename)
+            f = open(filepath, "w", 1)  # line-buffered
+            with self._log_file_lock:
+                self._log_file = f
+            self.log("[+] Logging output to: %s" % filepath)
+        except Exception as exc:
+            self.log("[!] Could not open log file: %s" % exc)
+
+    def _close_log_file(self):
+        """Flush and close the current log file."""
+        with self._log_file_lock:
+            f = self._log_file
+            self._log_file = None
+        if f is not None:
+            try:
+                f.flush()
+                f.close()
+            except Exception:
+                pass
+
     def _start_clicked(self, _event):
         try:
             config = self._build_config()
@@ -1558,16 +1650,21 @@ class DirbustPanel(JPanel):
                 JOptionPane.WARNING_MESSAGE,
             )
             return
+        self._close_log_file()
+        self._open_log_file(config)
         self.extender.start_scan(config)
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
 
     def _stop_clicked(self, _event):
         self.extender.stop_scan()
+        self._close_log_file()
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
     def scan_finished(self):
+        self._close_log_file()
+
         def reset():
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
@@ -1641,6 +1738,27 @@ class DirbustPanel(JPanel):
                 parent_path = selected.getParent()
                 if parent_path:
                     self.last_wordlist_directory = parent_path
+
+    def _browse_output_dir(self, _event):
+        chooser = JFileChooser()
+        chooser.setDialogTitle("Select output folder")
+        chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY)
+        current_path = self.output_dir_field.getText().strip()
+        if current_path and os.path.isdir(current_path):
+            chooser.setCurrentDirectory(File(current_path))
+        else:
+            chooser.setCurrentDirectory(File(os.path.expanduser("~")))
+        parent = self.extender.get_burp_frame() or self
+        result = chooser.showOpenDialog(parent)
+        if result == JFileChooser.APPROVE_OPTION:
+            selected = chooser.getSelectedFile()
+            if selected:
+                path = selected.getAbsolutePath()
+                self.output_dir_field.setText(strip_invisible(path))
+                try:
+                    self.callbacks.saveExtensionSetting("dirbust.output_dir", path)
+                except Exception:
+                    pass
 
     def _enable_undo(self, component):
         manager = UndoManager()
@@ -2216,7 +2334,8 @@ class BurpExtender(
         except Exception:
             self._burp_frame = None
         saved_wordlist = callbacks.loadExtensionSetting("dirbust.wordlist_path") or ""
-        self.panel = DirbustPanel(self, saved_wordlist)
+        saved_output_dir = callbacks.loadExtensionSetting("dirbust.output_dir") or ""
+        self.panel = DirbustPanel(self, saved_wordlist, saved_output_dir)
         self.scanner = DirbustScanner(
             callbacks,
             self.panel.log,
