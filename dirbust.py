@@ -52,6 +52,7 @@ from javax.swing import JPopupMenu
 from javax.swing import JScrollPane
 from javax.swing import JSplitPane
 from javax.swing import JTable
+from javax.swing import JProgressBar
 from javax.swing import JSpinner
 from javax.swing import JTabbedPane
 from javax.swing import JTextArea
@@ -314,23 +315,28 @@ class DirbustScanner(object):
         ui_callback,
         result_callback=None,
         finished_callback=None,
+        progress_callback=None,
     ):
         self.callbacks = callbacks
         self.helpers = callbacks.getHelpers()
         self.ui_callback = ui_callback
         self.result_callback = result_callback
         self.finished_callback = finished_callback
+        self.progress_callback = progress_callback
         self._threads = []
         self._queue = Queue.Queue()
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
         self._state_lock = threading.Lock()
+        self._progress_lock = threading.Lock()
         self._running = False
         self._https_upgraded = False
         self._visited = set()
         self.config = None
         self._wordlist_entries = []
         self._completion_thread = None
+        self._total_requests = 0
+        self._done_requests = 0
 
     def log(self, message, color=None):
         if self.ui_callback:
@@ -371,12 +377,18 @@ class DirbustScanner(object):
             self._queue = Queue.Queue()
             self._visited = set()
             has_entries = False
+            entry_count = 0
             for entry in self._generate_entries(wordlist_iter, entry_cache):
                 has_entries = True
                 path = self._build_path(entry)
                 self._queue.put((path, 0))
+                entry_count += 1
             if not has_entries:
                 raise ValueError("Wordlist is empty or unreadable")
+            with self._progress_lock:
+                self._total_requests = entry_count
+                self._done_requests = 0
+            self._notify_progress()
             self._wordlist_entries = entry_cache or tuple()
             for _ in range(self.config.threads):
                 thread = threading.Thread(target=self._worker, name="Dirbust-worker")
@@ -585,6 +597,9 @@ class DirbustScanner(object):
                 self._handle_thread_exception("Dirbust worker")
             finally:
                 self._queue.task_done()
+                with self._progress_lock:
+                    self._done_requests += 1
+                self._notify_progress()
                 if self.config.delay:
                     time.sleep(self.config.delay)
 
@@ -646,6 +661,7 @@ class DirbustScanner(object):
         base = directory_path
         if not base.endswith("/"):
             base += "/"
+        added = 0
         for entry in self._wordlist_entries:
             if entry.startswith("/"):
                 relative = entry[1:]
@@ -653,6 +669,11 @@ class DirbustScanner(object):
                 relative = entry
             new_path = base + relative
             self._queue.put((new_path, depth))
+            added += 1
+        if added:
+            with self._progress_lock:
+                self._total_requests += added
+            self._notify_progress()
 
     def _should_skip(self, status, length, body_text):
         if self.config.include_status and status not in self.config.include_status:
@@ -1016,6 +1037,17 @@ class DirbustScanner(object):
             pass
         self.log("%s encountered an unexpected error. See the Extender error tab for details." % context)
 
+    def _notify_progress(self):
+        if not self.progress_callback:
+            return
+        with self._progress_lock:
+            done = self._done_requests
+            total = self._total_requests
+        try:
+            self.progress_callback(done, total)
+        except Exception:
+            pass
+
     def _mark_finished(self):
         self._set_running(False)
         if self.finished_callback:
@@ -1240,10 +1272,21 @@ class DirbustPanel(JPanel):
         results_splitter.setOneTouchExpandable(True)
         log_panel.add(results_splitter, BorderLayout.CENTER)
 
+        self.progress_bar = JProgressBar(0, 1)
+        self.progress_bar.setStringPainted(True)
+        self.progress_bar.setString("Ready")
+        self.progress_bar.setPreferredSize(Dimension(300, 20))
+        self.progress_label = JLabel("0 / 0 requests")
+        status_bar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
+        status_bar.setBorder(BorderFactory.createEtchedBorder())
+        status_bar.add(self.progress_bar)
+        status_bar.add(self.progress_label)
+
         splitter = JSplitPane(JSplitPane.VERTICAL_SPLIT, upper_panel, log_panel)
         splitter.setResizeWeight(0.5)
         splitter.setOneTouchExpandable(True)
         self.add(splitter, BorderLayout.CENTER)
+        self.add(status_bar, BorderLayout.SOUTH)
 
         self.start_button.addActionListener(self._start_clicked)
         self.stop_button.addActionListener(self._stop_clicked)
@@ -1374,8 +1417,45 @@ class DirbustPanel(JPanel):
         def reset():
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
+            try:
+                done = self.progress_bar.getValue()
+                total = self.progress_bar.getMaximum()
+                self.progress_bar.setString("Done (%d / %d)" % (done, total))
+            except Exception:
+                self.progress_bar.setString("Done")
 
         SwingUtilities.invokeLater(_SwingRunnable(reset))
+
+    def update_progress(self, done, total):
+        def apply():
+            try:
+                if total > 0:
+                    self.progress_bar.setMaximum(total)
+                    self.progress_bar.setValue(done)
+                    pct = int(done * 100 / total)
+                    self.progress_bar.setString("%d%%" % pct)
+                    self.progress_label.setText("%d / %d requests" % (done, total))
+                else:
+                    self.progress_bar.setMaximum(1)
+                    self.progress_bar.setValue(0)
+                    self.progress_bar.setString("0%")
+                    self.progress_label.setText("0 / 0 requests")
+            except Exception:
+                pass
+
+        SwingUtilities.invokeLater(_SwingRunnable(apply))
+
+    def reset_progress(self):
+        def apply():
+            try:
+                self.progress_bar.setMaximum(1)
+                self.progress_bar.setValue(0)
+                self.progress_bar.setString("Ready")
+                self.progress_label.setText("0 / 0 requests")
+            except Exception:
+                pass
+
+        SwingUtilities.invokeLater(_SwingRunnable(apply))
 
     def _browse_wordlist(self, _event):
         chooser = JFileChooser()
@@ -1872,6 +1952,13 @@ class DirbustPanel(JPanel):
                 self.log_area.setCaretPosition(0)
             except Exception:
                 pass
+            try:
+                self.progress_bar.setMaximum(1)
+                self.progress_bar.setValue(0)
+                self.progress_bar.setString("Ready")
+                self.progress_label.setText("0 / 0 requests")
+            except Exception:
+                pass
 
         SwingUtilities.invokeLater(_SwingRunnable(clear))
 
@@ -1981,6 +2068,7 @@ class BurpExtender(
             self.panel.log,
             self.panel.add_match_result,
             self.panel.scan_finished,
+            self.panel.update_progress,
         )
         callbacks.addSuiteTab(self)
         callbacks.registerContextMenuFactory(self)
