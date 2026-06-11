@@ -327,6 +327,7 @@ class DirbustScanner(object):
         self._queue = Queue.Queue()
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
+        self._visited_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._progress_lock = threading.Lock()
         self._running = False
@@ -335,8 +336,11 @@ class DirbustScanner(object):
         self.config = None
         self._wordlist_entries = []
         self._completion_thread = None
+        self._producer_thread = None
+        self._loading_done = threading.Event()
         self._total_requests = 0
         self._done_requests = 0
+        self._last_progress_update = 0.0
 
     def log(self, message, color=None):
         if self.ui_callback:
@@ -373,28 +377,26 @@ class DirbustScanner(object):
             self._setup_target(parsed)
             upgrade_note = self._probe_https_upgrade()
             self._stop_event.clear()
+            self._loading_done.clear()
             self._threads = []
-            self._queue = Queue.Queue()
+            self._queue = Queue.Queue(maxsize=1000)
             self._visited = set()
-            has_entries = False
-            entry_count = 0
-            for entry in self._generate_entries(wordlist_iter, entry_cache):
-                has_entries = True
-                path = self._build_path(entry)
-                self._queue.put((path, 0))
-                entry_count += 1
-            if not has_entries:
-                raise ValueError("Wordlist is empty or unreadable")
             with self._progress_lock:
-                self._total_requests = entry_count
+                self._total_requests = 0
                 self._done_requests = 0
-            self._notify_progress()
-            self._wordlist_entries = entry_cache or tuple()
+            self._wordlist_entries = entry_cache if entry_cache is not None else []
             for _ in range(self.config.threads):
                 thread = threading.Thread(target=self._worker, name="Dirbust-worker")
                 thread.daemon = True
                 thread.start()
                 self._threads.append(thread)
+            self._producer_thread = threading.Thread(
+                target=self._feed_queue,
+                args=(wordlist_iter, entry_cache),
+                name="Dirbust-producer",
+            )
+            self._producer_thread.daemon = True
+            self._producer_thread.start()
             # self.log(
             #     "Scan started with %d entries and %d threads"
             #     % (self._queue.qsize(), self.config.threads)
@@ -442,14 +444,19 @@ class DirbustScanner(object):
         self.log(separator)
 
     def stop(self):
-        """Stop an in-progress scan by draining the queue and joining workers."""
+        """Stop an in-progress scan."""
         if not self.is_running():
             return
         self._stop_event.set()
-        while not self._queue.empty():
+        # Drain queue so blocked workers and producer unblock quickly.
+        # Cap at 10000 to avoid spinning forever on a very large queued backlog;
+        # the producer stops on its own once it sees stop_event.
+        drained = 0
+        while drained < 10000:
             try:
                 self._queue.get_nowait()
                 self._queue.task_done()
+                drained += 1
             except Queue.Empty:
                 break
         for thread in self._threads:
@@ -461,11 +468,44 @@ class DirbustScanner(object):
         except Exception:
             pass
         self._completion_thread = None
+        try:
+            if self._producer_thread is not None:
+                self._producer_thread.join(1.0)
+        except Exception:
+            pass
+        self._producer_thread = None
         self._set_running(False)
         self.log_scan_footer()
 
+    def _feed_queue(self, wordlist_iter, entry_cache):
+        """Producer: stream wordlist entries into the bounded queue, respecting stop_event."""
+        fed_any = False
+        try:
+            for entry in self._generate_entries(wordlist_iter, entry_cache):
+                if self._stop_event.is_set():
+                    break
+                path = self._build_path(entry)
+                while not self._stop_event.is_set():
+                    try:
+                        self._queue.put((path, 0), timeout=0.2)
+                        fed_any = True
+                        with self._progress_lock:
+                            self._total_requests += 1
+                        break
+                    except Queue.Full:
+                        continue
+            if not fed_any and not self._stop_event.is_set():
+                self.log("No entries loaded from wordlist — check the path and file format")
+        except Exception:
+            self._handle_thread_exception("Dirbust producer")
+        finally:
+            self._loading_done.set()
+
     def _wait_for_completion(self):
         try:
+            # Block until the producer has finished feeding the queue, then wait
+            # for all queued tasks (including any added by recursion/redirects).
+            self._loading_done.wait()
             self._queue.join()
             if self._stop_event.is_set():
                 return
@@ -610,7 +650,9 @@ class DirbustScanner(object):
             time.sleep(1.0 / max(1, self.config.rate))
         if path in self._visited:
             return
-        with self._lock:
+        with self._visited_lock:
+            if path in self._visited:
+                return
             self._visited.add(path)
         request_bytes = self._build_request(path)
         if not request_bytes:
@@ -655,14 +697,17 @@ class DirbustScanner(object):
             location = self._extract_location(analyzed.getHeaders())
             redirected = self._resolve_location(location)
             if redirected:
+                with self._progress_lock:
+                    self._total_requests += 1
                 self._queue.put((redirected, depth))
 
     def _enqueue_recursion(self, directory_path, depth):
         base = directory_path
         if not base.endswith("/"):
             base += "/"
+        entries = list(self._wordlist_entries)  # snapshot; producer may still be appending
         added = 0
-        for entry in self._wordlist_entries:
+        for entry in entries:
             if entry.startswith("/"):
                 relative = entry[1:]
             else:
@@ -1040,6 +1085,10 @@ class DirbustScanner(object):
     def _notify_progress(self):
         if not self.progress_callback:
             return
+        now = time.time()
+        if now - self._last_progress_update < 0.15:
+            return
+        self._last_progress_update = now
         with self._progress_lock:
             done = self._done_requests
             total = self._total_requests
