@@ -478,24 +478,26 @@ class DirbustScanner(object):
         self.log_scan_footer()
 
     def _feed_queue(self, wordlist_iter, entry_cache):
-        """Producer: stream wordlist entries into the bounded queue, respecting stop_event."""
-        fed_any = False
+        """Producer: collect all expanded entries, set a fixed total, then stream into the bounded queue."""
         try:
-            for entry in self._generate_entries(wordlist_iter, entry_cache):
+            all_entries = list(self._generate_entries(wordlist_iter, entry_cache))
+            if not all_entries:
+                if not self._stop_event.is_set():
+                    self.log("No entries loaded from wordlist — check the path and file format")
+                return
+            with self._progress_lock:
+                self._total_requests = len(all_entries)
+            self._notify_progress()
+            for entry in all_entries:
                 if self._stop_event.is_set():
                     break
                 path = self._build_path(entry)
                 while not self._stop_event.is_set():
                     try:
                         self._queue.put((path, 0), timeout=0.2)
-                        fed_any = True
-                        with self._progress_lock:
-                            self._total_requests += 1
                         break
                     except Queue.Full:
                         continue
-            if not fed_any and not self._stop_event.is_set():
-                self.log("No entries loaded from wordlist — check the path and file format")
         except Exception:
             self._handle_thread_exception("Dirbust producer")
         finally:
@@ -697,8 +699,6 @@ class DirbustScanner(object):
             location = self._extract_location(analyzed.getHeaders())
             redirected = self._resolve_location(location)
             if redirected:
-                with self._progress_lock:
-                    self._total_requests += 1
                 self._queue.put((redirected, depth))
 
     def _enqueue_recursion(self, directory_path, depth):
@@ -715,10 +715,6 @@ class DirbustScanner(object):
             new_path = base + relative
             self._queue.put((new_path, depth))
             added += 1
-        if added:
-            with self._progress_lock:
-                self._total_requests += added
-            self._notify_progress()
 
     def _should_skip(self, status, length, body_text):
         if self.config.include_status and status not in self.config.include_status:
@@ -1324,12 +1320,14 @@ class DirbustPanel(JPanel):
         self.progress_bar = JProgressBar(0, 1)
         self.progress_bar.setStringPainted(True)
         self.progress_bar.setString("Ready")
-        self.progress_bar.setPreferredSize(Dimension(300, 20))
-        self.progress_label = JLabel("0 / 0 requests")
-        status_bar = JPanel(FlowLayout(FlowLayout.LEFT, 8, 4))
-        status_bar.setBorder(BorderFactory.createEtchedBorder())
-        status_bar.add(self.progress_bar)
-        status_bar.add(self.progress_label)
+        self.progress_label = JLabel("  0 / 0 requests  ")
+        status_bar = JPanel(BorderLayout(6, 0))
+        status_bar.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createEtchedBorder(),
+            BorderFactory.createEmptyBorder(3, 6, 3, 6),
+        ))
+        status_bar.add(self.progress_bar, BorderLayout.CENTER)
+        status_bar.add(self.progress_label, BorderLayout.EAST)
 
         splitter = JSplitPane(JSplitPane.VERTICAL_SPLIT, upper_panel, log_panel)
         splitter.setResizeWeight(0.5)
@@ -1483,12 +1481,12 @@ class DirbustPanel(JPanel):
                     self.progress_bar.setValue(done)
                     pct = int(done * 100 / total)
                     self.progress_bar.setString("%d%%" % pct)
-                    self.progress_label.setText("%d / %d requests" % (done, total))
+                    self.progress_label.setText("  %d / %d requests  " % (done, total))
                 else:
                     self.progress_bar.setMaximum(1)
                     self.progress_bar.setValue(0)
                     self.progress_bar.setString("0%")
-                    self.progress_label.setText("0 / 0 requests")
+                    self.progress_label.setText("  0 / 0 requests  ")
             except Exception:
                 pass
 
@@ -1500,7 +1498,7 @@ class DirbustPanel(JPanel):
                 self.progress_bar.setMaximum(1)
                 self.progress_bar.setValue(0)
                 self.progress_bar.setString("Ready")
-                self.progress_label.setText("0 / 0 requests")
+                self.progress_label.setText("  0 / 0 requests  ")
             except Exception:
                 pass
 
@@ -2005,7 +2003,7 @@ class DirbustPanel(JPanel):
                 self.progress_bar.setMaximum(1)
                 self.progress_bar.setValue(0)
                 self.progress_bar.setString("Ready")
-                self.progress_label.setText("0 / 0 requests")
+                self.progress_label.setText("  0 / 0 requests  ")
             except Exception:
                 pass
 
