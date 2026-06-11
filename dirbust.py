@@ -37,14 +37,7 @@ from java.awt import GridBagConstraints
 from java.awt import GridBagLayout
 from java.awt import Insets
 from java.io import File
-from java.io import ByteArrayOutputStream
 from java.lang import Runnable
-from java.net import Socket
-from java.net import InetSocketAddress
-from java.net import SocketTimeoutException
-from javax.net.ssl import SSLContext
-from javax.net.ssl import X509TrustManager
-from java.security import SecureRandom
 from javax.swing import AbstractAction
 from javax.swing import BorderFactory
 from javax.swing import JButton
@@ -85,21 +78,6 @@ try:
     from urlparse import urlparse, urljoin
 except ImportError:
     from urllib.parse import quote, urlparse, urljoin
-
-import jarray
-
-
-class _TrustAllTLSManager(X509TrustManager):
-    """Accept any server certificate — appropriate for a security-testing tool."""
-
-    def checkClientTrusted(self, chain, authType):
-        pass
-
-    def checkServerTrusted(self, chain, authType):
-        pass
-
-    def getAcceptedIssuers(self):
-        return []
 
 
 class _SwingRunnable(Runnable):
@@ -366,64 +344,6 @@ class DirbustScanner(object):
         self._total_requests = 0
         self._done_requests = 0
         self._last_progress_update = 0.0
-        self._ssl_ctx = self._init_ssl_ctx()
-
-    @staticmethod
-    def _init_ssl_ctx():
-        try:
-            ctx = SSLContext.getInstance("TLS")
-            ctx.init(None, [_TrustAllTLSManager()], SecureRandom())
-            return ctx
-        except Exception:
-            return SSLContext.getDefault()
-
-    def _raw_request(self, host, port, use_https, request_bytes, timeout_ms):
-        """Send a raw HTTP/HTTPS request over a plain Java socket.
-
-        Bypasses callbacks.makeHttpRequest() so that IHttpListener hooks
-        registered by other Burp extensions are never triggered, removing
-        the per-request overhead imposed by passive-analysis extensions.
-        Results are still displayed in the Dirbust panel as normal.
-        NOTE: does not use any upstream proxy configured in Burp.
-        """
-        sock = None
-        try:
-            if use_https:
-                sock = self._ssl_ctx.getSocketFactory().createSocket()
-                # Set SNI before the TLS handshake so virtual-hosted HTTPS servers
-                # respond with the correct certificate.
-                try:
-                    from javax.net.ssl import SNIHostName
-                    params = sock.getSSLParameters()
-                    params.setServerNames([SNIHostName(host)])
-                    sock.setSSLParameters(params)
-                except Exception:
-                    pass
-            else:
-                sock = Socket()
-            sock.connect(InetSocketAddress(host, port), timeout_ms)
-            sock.setSoTimeout(timeout_ms)
-            out = sock.getOutputStream()
-            out.write(request_bytes)
-            out.flush()
-            inp = sock.getInputStream()
-            buf = ByteArrayOutputStream()
-            chunk = jarray.zeros(8192, 'b')
-            try:
-                while True:
-                    n = inp.read(chunk)
-                    if n < 0:
-                        break
-                    buf.write(chunk, 0, n)
-            except SocketTimeoutException:
-                pass  # Connection: close means EOF is normal; timeout after partial data is fine
-            return buf.toByteArray()
-        finally:
-            if sock is not None:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
 
     def log(self, message, color=None):
         if self.ui_callback:
@@ -694,11 +614,9 @@ class DirbustScanner(object):
             request_bytes = self._build_request(self.base_path or "/")
             if not request_bytes:
                 return None
-            timeout_ms = int(getattr(self.config, "timeout", 5.0) * 1000)
-            raw_response = self._raw_request(
-                self.host, self.port, self.use_https, request_bytes, timeout_ms
-            )
-            if raw_response is None or len(raw_response) < 12:
+            response = self.callbacks.makeHttpRequest(self.service, request_bytes)
+            raw_response = response.getResponse()
+            if raw_response is None:
                 return None
             analyzed = self.helpers.analyzeResponse(raw_response)
             status = analyzed.getStatusCode()
@@ -752,6 +670,24 @@ class DirbustScanner(object):
                         cache.append(normalized)
                     yield normalized
 
+    def _worker(self):
+        while not self._stop_event.is_set():
+            try:
+                item, depth = self._queue.get(timeout=0.1)
+            except Queue.Empty:
+                continue
+            try:
+                self._process_item(item, depth)
+            except Exception:
+                self._handle_thread_exception("Dirbust worker")
+            finally:
+                self._queue.task_done()
+                with self._progress_lock:
+                    self._done_requests += 1
+                self._notify_progress()
+                if self.config.delay:
+                    time.sleep(self.config.delay)
+
     def _process_item(self, path, depth, stop_event, work_queue):
         """Execute a single request, apply filters/recursion, and log/emit the result."""
         if stop_event.is_set():
@@ -767,14 +703,11 @@ class DirbustScanner(object):
         request_bytes = self._build_request(path)
         if not request_bytes:
             return
-        timeout_ms = int(self.config.timeout * 1000)
         attempt = 0
-        raw_response = None
+        response = None
         while attempt <= self.config.retries:
             try:
-                raw_response = self._raw_request(
-                    self.host, self.port, self.use_https, request_bytes, timeout_ms
-                )
+                response = self.callbacks.makeHttpRequest(self.service, request_bytes)
                 break
             except Exception as exc:
                 attempt += 1
@@ -782,7 +715,8 @@ class DirbustScanner(object):
                     self.log("Request failed for %s: %s" % (path, exc))
                     return
                 time.sleep(0.5)
-        if raw_response is None or len(raw_response) < 12:
+        raw_response = response.getResponse()
+        if raw_response is None:
             return
         analyzed = self.helpers.analyzeResponse(raw_response)
         status = analyzed.getStatusCode()
